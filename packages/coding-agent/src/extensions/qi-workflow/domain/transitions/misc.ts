@@ -100,6 +100,15 @@ export function cancelJob(state: QiWorkflowState, id: string): TransitionResult<
 	return ok({ ...state, jobs: state.jobs.map((item) => (item.id === job.id ? updated : item)) }, updated);
 }
 
+const TERMINAL_JOB: ReadonlySet<JobStatus> = new Set(["exited", "killed", "failed", "unknown"]);
+
+/** Remove finished jobs from domain so list/clear stay in sync with ProcessManager.clearFinished. */
+export function clearFinishedJobs(state: QiWorkflowState): TransitionResult<{ removed: number }> {
+	const kept = state.jobs.filter((job) => !TERMINAL_JOB.has(job.status));
+	const removed = state.jobs.length - kept.length;
+	return ok({ ...state, jobs: kept }, { removed });
+}
+
 export function recoverJobStatuses(state: QiWorkflowState): TransitionResult<null> {
 	const jobs = state.jobs.map((job) => {
 		if (job.status !== "running" && job.status !== "terminating") return job;
@@ -118,7 +127,13 @@ export function openQuestion(
 	state: QiWorkflowState,
 	prompt: string,
 	options: QuestionOption[],
-	opts?: { header?: string; multiSelect?: boolean; allowFreeInput?: boolean },
+	opts?: {
+		header?: string;
+		multiSelect?: boolean;
+		allowFreeInput?: boolean;
+		questionIndex?: number;
+		questionCount?: number;
+	},
 ): TransitionResult<StructuredQuestion> {
 	const trimmed = prompt.trim();
 	if (!trimmed) return fail(state, "Question prompt is required");
@@ -132,6 +147,8 @@ export function openQuestion(
 		options,
 		multiSelect: opts?.multiSelect,
 		allowFreeInput: opts?.allowFreeInput ?? true,
+		questionIndex: opts?.questionIndex,
+		questionCount: opts?.questionCount,
 		status: "open",
 		createdAt: t,
 		updatedAt: t,
@@ -145,6 +162,7 @@ export function answerQuestion(
 	state: QiWorkflowState,
 	selected: string[],
 	freeInput?: string,
+	notes?: string,
 ): TransitionResult<StructuredQuestion> {
 	if (!state.question || state.question.status !== "open") return fail(state, "No open question");
 	const answerSummary = [...selected, freeInput?.trim()].filter(Boolean).join("; ");
@@ -154,6 +172,7 @@ export function answerQuestion(
 		status: "answered" as QuestionStatus,
 		selected,
 		freeInput: freeInput?.trim() || undefined,
+		notes: notes?.trim() || undefined,
 		answerSummary,
 		summary: answerSummary,
 	};

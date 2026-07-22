@@ -2,27 +2,31 @@ import type { Component, TUI } from "@earendil-works/pi-tui";
 import { matchesKey, truncateToWidth, wrapTextWithAnsi } from "@earendil-works/pi-tui";
 import type { ExtensionUIContext } from "../../../core/extensions/types.ts";
 import type { Theme } from "../../../modes/interactive/theme/theme.ts";
+import {
+	cancelTodoViaVendor,
+	completeTodoViaVendor,
+	executePlanToTodosViaVendor,
+	removeTodoViaVendor,
+	startTodoViaVendor,
+} from "../adapters/index.ts";
 import type { WorkflowController } from "../controller.ts";
 import {
 	cancelJob,
 	cancelTask,
-	cancelTodo,
 	cancelWorkflow,
-	completeTodo,
 	createWorkflow,
 	discardPlan,
-	executePlanToTodos,
 	executePlanToWorkflow,
 	type JobEntity,
 	markPlanReady,
+	moveTodo,
 	type Plan,
 	type QiWorkflowState,
-	removeTodo,
-	startTodo,
 	type TaskEntity,
 	type TodoItem,
 	type WorkflowEntity,
 } from "../domain/index.ts";
+import { jobManager } from "../runtime/job-manager.ts";
 import { colorStatus } from "./status-color.ts";
 
 export type DashboardTab = "plan" | "todo" | "workflow" | "task" | "job";
@@ -220,7 +224,7 @@ class WorkDashboard implements Component {
 				]);
 				if (!action || action === "Cancel") return;
 				if (action === "Create ordered Todos") {
-					this.applyOrNotify((s) => executePlanToTodos(s), "Plan → todos");
+					this.applyOrNotify((s) => executePlanToTodosViaVendor(s), "Plan → todos");
 				} else if (action === "Create Workflow") {
 					this.applyOrNotify((s) => {
 						if (!s.plan || s.plan.status !== "ready") {
@@ -249,14 +253,22 @@ class WorkDashboard implements Component {
 				"Start",
 				"Complete",
 				"Cancel",
+				"Move up",
+				"Move down",
 				"Remove",
 				"Back",
 			]);
 			if (!action || action === "Back") return;
-			if (action === "Start") this.applyOrNotify((s) => startTodo(s, item.id), "Todo started");
-			else if (action === "Complete") this.applyOrNotify((s) => completeTodo(s, item.id), "Todo completed");
-			else if (action === "Cancel") this.applyOrNotify((s) => cancelTodo(s, item.id), "Todo cancelled");
-			else if (action === "Remove") this.applyOrNotify((s) => removeTodo(s, item.id), "Todo removed");
+			if (action === "Start") this.applyOrNotify((s) => startTodoViaVendor(s, item.id), "Todo started");
+			else if (action === "Complete") this.applyOrNotify((s) => completeTodoViaVendor(s, item.id), "Todo completed");
+			else if (action === "Cancel") this.applyOrNotify((s) => cancelTodoViaVendor(s, item.id), "Todo cancelled");
+			else if (action === "Move up") {
+				const todo = this.state().todos.find((t) => t.id === item.id);
+				if (todo) this.applyOrNotify((s) => moveTodo(s, item.id, Math.max(0, todo.position - 1)), "Moved up");
+			} else if (action === "Move down") {
+				const todo = this.state().todos.find((t) => t.id === item.id);
+				if (todo) this.applyOrNotify((s) => moveTodo(s, item.id, todo.position + 1), "Moved down");
+			} else if (action === "Remove") this.applyOrNotify((s) => removeTodoViaVendor(s, item.id), "Todo removed");
 			return;
 		}
 
@@ -275,9 +287,35 @@ class WorkDashboard implements Component {
 		}
 
 		if (this.tab === "job") {
-			const ok = await this.ctx.ui.confirm("Cancel job", `Cancel job "${item.title}"?`);
-			if (!ok) return;
-			this.applyOrNotify((s) => cancelJob(s, item.id), "Job cancel requested");
+			const action = await this.ctx.ui.select(`Job: ${item.title}`, [
+				"View logs",
+				"Cancel",
+				"Clear finished",
+				"Back",
+			]);
+			if (!action || action === "Back") return;
+			if (action === "View logs") {
+				try {
+					const logs = jobManager.logs(item.id, 40);
+					this.setMessage(logs.trim() ? logs.slice(0, 600) : "(no output yet)");
+					this.refresh();
+				} catch (err) {
+					this.setMessage(err instanceof Error ? err.message : String(err));
+					this.refresh();
+				}
+				return;
+			}
+			if (action === "Clear finished") {
+				const n = jobManager.clearFinished();
+				this.setMessage(`Cleared ${n} finished job(s)`);
+				this.refresh();
+				return;
+			}
+			if (action === "Cancel") {
+				const ok = await this.ctx.ui.confirm("Cancel job", `Cancel job "${item.title}"?`);
+				if (!ok) return;
+				this.applyOrNotify((s) => cancelJob(s, item.id), "Job cancel requested");
+			}
 		}
 	}
 
@@ -372,12 +410,38 @@ class WorkDashboard implements Component {
 
 	private renderTodoDetail(todo: TodoItem, width: number): string[] {
 		const th = this.theme;
-		return [
+		const lines = [
 			truncateToWidth(`${colorStatus(th, todo.status, todo.status)} ${th.fg("text", todo.text)}`, width),
-			truncateToWidth(th.fg("dim", `id ${shortId(todo.id)} · pos ${todo.position}`), width),
-			...(todo.blockReason ? wrapTextWithAnsi(th.fg("error", `blocked: ${todo.blockReason}`), width) : []),
-			...(todo.verification ? wrapTextWithAnsi(th.fg("success", `ok: ${todo.verification}`), width) : []),
+			truncateToWidth(
+				th.fg("dim", `id ${shortId(todo.id)} · pos ${todo.position}${todo.owner ? ` · owner ${todo.owner}` : ""}`),
+				width,
+			),
 		];
+		if (todo.description) lines.push(...wrapTextWithAnsi(th.fg("muted", todo.description), width));
+		if (todo.activeForm) lines.push(truncateToWidth(th.fg("accent", `active: ${todo.activeForm}`), width));
+		if (todo.blockedBy && todo.blockedBy.length > 0) {
+			lines.push(truncateToWidth(th.fg("warning", `blockedBy: ${todo.blockedBy.join(", ")}`), width));
+		}
+		if (todo.blockReason) lines.push(...wrapTextWithAnsi(th.fg("error", `blocked: ${todo.blockReason}`), width));
+		if (todo.verification) lines.push(...wrapTextWithAnsi(th.fg("success", `ok: ${todo.verification}`), width));
+		return lines;
+	}
+
+	private renderJobDetail(job: JobEntity, width: number): string[] {
+		const th = this.theme;
+		const lines = [
+			truncateToWidth(`${colorStatus(th, job.status, job.status)} ${th.fg("text", job.name)}`, width),
+			truncateToWidth(th.fg("muted", job.command), width),
+			truncateToWidth(
+				th.fg(
+					"dim",
+					`cwd ${job.cwd}${job.pid ? ` · pid ${job.pid}` : ""}${job.exitCode !== undefined ? ` · exit ${job.exitCode}` : ""} · bytes ${job.outputBytes}`,
+				),
+				width,
+			),
+		];
+		if (job.logPath) lines.push(truncateToWidth(th.fg("dim", `log ${job.logPath}`), width));
+		return lines;
 	}
 
 	private renderWorkflowDetail(wf: WorkflowEntity, width: number): string[] {
@@ -403,21 +467,6 @@ class WorkDashboard implements Component {
 			),
 			...(task.error ? wrapTextWithAnsi(th.fg("error", task.error), width) : []),
 			...(task.resultSummary ? wrapTextWithAnsi(th.fg("muted", task.resultSummary), width) : []),
-		];
-	}
-
-	private renderJobDetail(job: JobEntity, width: number): string[] {
-		const th = this.theme;
-		return [
-			truncateToWidth(`${colorStatus(th, job.status, job.status)} ${th.fg("text", job.name)}`, width),
-			truncateToWidth(th.fg("muted", job.command), width),
-			truncateToWidth(
-				th.fg(
-					"dim",
-					`cwd ${job.cwd}${job.pid ? ` · pid ${job.pid}` : ""}${job.exitCode !== undefined ? ` · exit ${job.exitCode}` : ""}`,
-				),
-				width,
-			),
 		];
 	}
 
@@ -589,7 +638,7 @@ async function narrowDashboardSelect(
 			} else if (plan.status === "ready") {
 				const action = await ctx.ui.select("Execute plan", ["Create ordered Todos", "Create Workflow", "Back"]);
 				if (action === "Create ordered Todos") {
-					const r = controller.apply((s) => executePlanToTodos(s));
+					const r = controller.apply((s) => executePlanToTodosViaVendor(s));
 					ctx.ui.notify(r.ok ? "Plan → todos" : r.error, r.ok ? "info" : "error");
 				} else if (action === "Create Workflow") {
 					const r = controller.apply((s) => {
@@ -611,12 +660,12 @@ async function narrowDashboardSelect(
 			if (!action || action === "Back") continue;
 			const r =
 				action === "Start"
-					? controller.apply((s) => startTodo(s, item.id))
+					? controller.apply((s) => startTodoViaVendor(s, item.id))
 					: action === "Complete"
-						? controller.apply((s) => completeTodo(s, item.id))
+						? controller.apply((s) => completeTodoViaVendor(s, item.id))
 						: action === "Cancel"
-							? controller.apply((s) => cancelTodo(s, item.id))
-							: controller.apply((s) => removeTodo(s, item.id));
+							? controller.apply((s) => cancelTodoViaVendor(s, item.id))
+							: controller.apply((s) => removeTodoViaVendor(s, item.id));
 			ctx.ui.notify(r.ok ? action : r.error, r.ok ? "info" : "error");
 			continue;
 		}

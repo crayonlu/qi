@@ -6,11 +6,9 @@ import type {
 	PlanSections,
 	PlanStatus,
 	QiWorkflowState,
-	TodoItem,
 	WorkflowEntity,
 } from "../types.ts";
 import { emptySections } from "../types.ts";
-import { addTodo } from "./goal-todo.ts";
 
 function bump(entity: { revision: number; updatedAt: number }): void {
 	entity.revision += 1;
@@ -100,36 +98,6 @@ export function discardPlan(state: QiWorkflowState, expectedRevision?: number): 
 	const plan = { ...state.plan, status: "discarded" as PlanStatus, summary: `Discarded: ${state.plan.goal}` };
 	bump(plan);
 	return ok({ ...state, plan }, plan);
-}
-
-export function executePlanToTodos(
-	state: QiWorkflowState,
-	expectedRevision?: number,
-): TransitionResult<{ plan: Plan; todos: TodoItem[] }> {
-	if (!state.plan || state.plan.status !== "ready") return fail(state, "Plan must be ready to execute");
-	if (expectedRevision !== undefined && state.plan.revision !== expectedRevision) {
-		return fail(state, "Stale plan revision");
-	}
-
-	let next = state;
-	const created: TodoItem[] = [];
-	for (const step of state.plan.sections.steps) {
-		const result = addTodo(next, step);
-		if (!result.ok) return fail(state, result.error);
-		next = result.state;
-		created.push(result.value);
-	}
-
-	const targetId = created.map((todo) => todo.id).join(",") || newId("todos");
-	const plan = {
-		...next.plan!,
-		status: "executing" as PlanStatus,
-		conversionTarget: { kind: "todos" as ConversionTargetKind, targetId },
-		summary: `Executing via todos: ${next.plan!.goal}`,
-	};
-	bump(plan);
-	next = { ...next, plan };
-	return ok(next, { plan, todos: created });
 }
 
 export function executePlanToWorkflow(

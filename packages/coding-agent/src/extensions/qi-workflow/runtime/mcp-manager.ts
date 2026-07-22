@@ -4,7 +4,7 @@
  */
 
 import { Type } from "typebox";
-import type { ExtensionAPI } from "../../../core/extensions/types.ts";
+import type { ExtensionAPI, ExtensionContext } from "../../../core/extensions/types.ts";
 import { workflowController } from "../controller.ts";
 import { type McpConnectionStatus, type McpServerState, setMcpEnabled, upsertMcpServer } from "../domain/index.ts";
 import { loadMcpConfig } from "../vendor/mcp/config.ts";
@@ -53,10 +53,45 @@ export class McpManager {
 	private lifecycle = new McpLifecycleManager(this.manager);
 	private cwd = process.cwd();
 	private proxyRegistered = false;
+	private interactiveConfigured = false;
 
 	private ensure(cwd: string): void {
 		this.cwd = cwd;
 		this.manager = this.manager ?? new McpServerManager(cwd);
+	}
+
+	/**
+	 * Wire retained sampling/elicitation handlers before connect (pi-mcp-adapter init parity).
+	 * Headless: sampling only when samplingAutoApprove; elicitation requires UI.
+	 */
+	configureInteractive(ctx: ExtensionContext): void {
+		const config = loadMcpConfig(undefined, ctx.cwd);
+		const samplingAutoApprove = config.settings?.samplingAutoApprove === true;
+		if (config.settings?.sampling !== false && (ctx.hasUI || samplingAutoApprove)) {
+			this.manager.setSamplingConfig({
+				autoApprove: samplingAutoApprove,
+				ui: ctx.hasUI ? ctx.ui : undefined,
+				modelRegistry: ctx.modelRegistry,
+				getCurrentModel: () => ctx.model,
+				getSignal: () => ctx.signal,
+			});
+		} else {
+			this.manager.setSamplingConfig(undefined);
+		}
+		const elicitationEnabled = config.settings?.elicitation !== false && ctx.hasUI;
+		if (elicitationEnabled) {
+			this.manager.setElicitationConfig({
+				ui: ctx.ui,
+				allowUrl: ctx.hasUI && ctx.mode === "tui",
+			});
+		} else {
+			this.manager.setElicitationConfig(undefined);
+		}
+		this.interactiveConfigured = true;
+	}
+
+	hasInteractiveCapabilitiesConfigured(): boolean {
+		return this.interactiveConfigured;
 	}
 
 	discover(cwd: string = process.cwd()): McpServerState[] {
@@ -271,13 +306,14 @@ export class McpManager {
 		pi.registerTool({
 			name: "mcp",
 			label: "MCP",
-			description: "MCP proxy: status, list, connect, call, auth. Prefer /mcp for interactive management.",
+			description: "MCP proxy: status, list, connect, call, auth, resources, read_resource.",
 			parameters: Type.Object({
 				action: Type.Optional(Type.String()),
 				server: Type.Optional(Type.String()),
 				tool: Type.Optional(Type.String()),
 				args: Type.Optional(Type.String()),
 				connect: Type.Optional(Type.String()),
+				uri: Type.Optional(Type.String()),
 			}),
 			async execute(_toolCallId, params, signal) {
 				self.discover(cwd);
@@ -299,6 +335,40 @@ export class McpManager {
 					if (!serverName) return textResult("Error: server required", { error: "missing_server" });
 					const result = await self.auth(serverName, cwd);
 					return textResult(result.message, { action, ok: result.ok });
+				}
+
+				if (action === "resources" || action === "list_resources") {
+					if (!serverName) return textResult("Error: server required", { error: "missing_server" });
+					const config = self.configs.get(serverName);
+					if (!config) return textResult(`Error: server not found: ${serverName}`, { error: "not_found" });
+					if (!self.manager.getConnection(serverName)) {
+						await self.manager.connect(serverName, config.definition);
+					}
+					const connection = self.manager.getConnection(serverName);
+					const resources = connection?.resources ?? [];
+					const lines = resources.map((r) => `${r.uri}${r.name ? ` (${r.name})` : ""}`);
+					return textResult(lines.join("\n") || "(no resources)", {
+						action: "resources",
+						server: serverName,
+						resources,
+					});
+				}
+
+				if (action === "read_resource") {
+					if (!serverName || !params.uri) {
+						return textResult("Error: server and uri required", { error: "missing_args" });
+					}
+					const config = self.configs.get(serverName);
+					if (!config) return textResult(`Error: server not found: ${serverName}`, { error: "not_found" });
+					if (!self.manager.getConnection(serverName)) {
+						await self.manager.connect(serverName, config.definition);
+					}
+					const result = await self.manager.readResource(serverName, params.uri, signal);
+					return textResult(JSON.stringify(result, null, 2), {
+						action: "read_resource",
+						server: serverName,
+						uri: params.uri,
+					});
 				}
 
 				if (action === "call") {

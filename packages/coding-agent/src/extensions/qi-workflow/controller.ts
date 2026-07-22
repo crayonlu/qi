@@ -18,6 +18,11 @@ export class WorkflowController {
 		this.appendEntry = (customType, data) => pi.appendEntry(customType, data);
 	}
 
+	/** Persist a branch-replayable custom entry (e.g. qi-todo-state). */
+	appendCustom(customType: string, data?: unknown): void {
+		this.appendEntry?.(customType, data);
+	}
+
 	getState(): QiWorkflowState {
 		return this.store.getState();
 	}

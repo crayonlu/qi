@@ -6,6 +6,7 @@ import { readFileSync } from "node:fs";
 import { workflowController } from "../controller.ts";
 import {
 	cancelJob,
+	clearFinishedJobs,
 	finishJob,
 	JOB_DEFAULT_TAIL_LINES,
 	type JobEntity,
@@ -93,6 +94,58 @@ export class JobManager {
 		return findJob(id);
 	}
 
+	list(): JobEntity[] {
+		return workflowController.getState().jobs.slice();
+	}
+
+	/** Structured process output (stdout/stderr/both). */
+	output(
+		id: string,
+		opts?: { tail?: number; stream?: "stdout" | "stderr" | "both" },
+	): { text: string; stdoutBytes: number; stderrBytes: number } {
+		const job = findJob(id);
+		if (!job) throw new Error(`Job not found: ${id}`);
+		const processId = this.processByJob.get(job.id);
+		const tail = Math.max(0, Math.floor(opts?.tail ?? JOB_DEFAULT_TAIL_LINES));
+		const stream = opts?.stream ?? "both";
+		if (processId) {
+			const parted = this.processes.getOutput(processId, tail);
+			const full = this.processes.getFullOutput(processId);
+			const stdoutBytes = full?.stdout.length ?? 0;
+			const stderrBytes = full?.stderr.length ?? 0;
+			if (!parted) return { text: "", stdoutBytes, stderrBytes };
+			if (stream === "stdout") return { text: parted.stdout.join("\n"), stdoutBytes, stderrBytes };
+			if (stream === "stderr") return { text: parted.stderr.join("\n"), stdoutBytes, stderrBytes };
+			const combined = this.processes.getCombinedOutput(processId, tail);
+			return {
+				text: combined?.map((line) => line.text).join("\n") ?? "",
+				stdoutBytes,
+				stderrBytes,
+			};
+		}
+		return { text: this.logs(id, tail), stdoutBytes: job.outputBytes, stderrBytes: 0 };
+	}
+
+	clearFinished(): number {
+		const cleared = this.processes.clearFinished();
+		const jobs = workflowController.getState().jobs;
+		for (const job of jobs) {
+			if (!TERMINAL.has(job.status)) continue;
+			const processId = this.processByJob.get(job.id);
+			if (processId) {
+				this.processByJob.delete(job.id);
+				this.jobByProcess.delete(processId);
+			}
+		}
+		const domain = workflowController.apply((state) => clearFinishedJobs(state));
+		const removed = domain.ok ? domain.value.removed : 0;
+		return Math.max(cleared, removed);
+	}
+
+	shutdownKillAll(): void {
+		this.processes.shutdownKillAll();
+	}
+
 	logs(id: string, tail: number = JOB_DEFAULT_TAIL_LINES): string {
 		const job = findJob(id);
 		const processId = job ? this.processByJob.get(job.id) : undefined;
@@ -115,12 +168,12 @@ export class JobManager {
 	}
 
 	/** Write to a running job's stdin (ProcessManager capability). */
-	write(id: string, data: string): void {
+	write(id: string, data: string, opts?: { end?: boolean }): void {
 		const job = findJob(id);
 		if (!job) throw new Error(`Job not found: ${id}`);
 		const processId = this.processByJob.get(job.id);
 		if (!processId) throw new Error(`No live process for job: ${job.id}`);
-		const result = this.processes.writeToStdin(processId, data);
+		const result = this.processes.writeToStdin(processId, data, { end: opts?.end === true });
 		if (!result.ok) throw new Error(result.reason);
 	}
 

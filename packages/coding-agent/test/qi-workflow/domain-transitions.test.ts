@@ -1,26 +1,31 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import {
-	addTodo,
+	addTodoViaVendor,
+	blockTodoViaVendor,
+	cancelTodoViaVendor,
+	completeTodoViaVendor,
+	executePlanToTodosViaVendor,
+	removeTodoViaVendor,
+	startTodoViaVendor,
+} from "../../src/extensions/qi-workflow/adapters/index.ts";
+import { workflowController } from "../../src/extensions/qi-workflow/controller.ts";
+import {
 	answerQuestion,
 	blockGoal,
-	blockTodo,
 	cancelJob,
 	cancelQuestion,
-	cancelTodo,
 	cancelWorkflow,
 	claimContinuation,
 	clearContinuationTicket,
 	clearGoal,
 	completeGoal,
 	completeTask,
-	completeTodo,
 	createEmptyState,
 	createTask,
 	createWorkflow,
 	discardPlan,
 	editGoal,
 	editPlanGoal,
-	executePlanToTodos,
 	executePlanToWorkflow,
 	failTask,
 	finishJob,
@@ -32,22 +37,26 @@ import {
 	recoverJobStatuses,
 	recoverTaskStatuses,
 	recoverWorkflowStatuses,
-	removeTodo,
 	resumeGoal,
 	setGoal,
 	setTaskRunning,
 	startBtw,
 	startJob,
 	startPlan,
-	startTodo,
 	updatePlanSections,
 } from "../../src/extensions/qi-workflow/domain/index.ts";
+import { __resetState } from "../../src/extensions/qi-workflow/vendor/todo/state/store.ts";
 
 function state() {
 	return createEmptyState("sess_test");
 }
 
 describe("qi-workflow goal/todo transitions", () => {
+	afterEach(() => {
+		__resetState();
+		workflowController.resetSession("sess_test");
+	});
+
 	it("sets, edits, pauses, resumes, and clears a goal", () => {
 		let s = state();
 		const created = setGoal(s, "Ship Qi workflow");
@@ -108,32 +117,37 @@ describe("qi-workflow goal/todo transitions", () => {
 		expect(third.ok && third.value).toBeTruthy();
 	});
 
-	it("manages ordered todos", () => {
-		let s = setGoal(state(), "Goal").state;
-		s = addTodo(s, "A").state;
-		s = addTodo(s, "B").state;
-		s = addTodo(s, "C").state;
-		const a = s.todos.find((t) => t.text === "A")!;
-		const b = s.todos.find((t) => t.text === "B")!;
-		const c = s.todos.find((t) => t.text === "C")!;
-		s = startTodo(s, a.id).state;
-		expect(s.todos.find((t) => t.id === a.id)?.status).toBe("in_progress");
-		s = blockTodo(s, a.id, "waiting").state;
-		expect(s.todos.find((t) => t.id === a.id)?.status).toBe("blocked");
-		s = completeTodo(s, a.id, "ok").state;
-		expect(s.todos.find((t) => t.id === a.id)?.status).toBe("completed");
-		s = cancelTodo(s, b.id).state;
-		const moved = moveTodo(s, c.id, 0);
+	it("manages vendor-backed todos with projection reorder", () => {
+		workflowController.resetSession("sess_test");
+		workflowController.apply((s) => setGoal(s, "Goal"));
+		workflowController.apply((s) => addTodoViaVendor(s, "A"));
+		workflowController.apply((s) => addTodoViaVendor(s, "B"));
+		workflowController.apply((s) => addTodoViaVendor(s, "C"));
+		const a = workflowController.getState().todos.find((t) => t.text === "A")!;
+		const b = workflowController.getState().todos.find((t) => t.text === "B")!;
+		const c = workflowController.getState().todos.find((t) => t.text === "C")!;
+		expect(workflowController.apply((s) => startTodoViaVendor(s, a.id)).ok).toBe(true);
+		expect(workflowController.getState().todos.find((t) => t.id === a.id)?.status).toBe("in_progress");
+		expect(workflowController.apply((s) => blockTodoViaVendor(s, a.id, "waiting")).ok).toBe(true);
+		expect(workflowController.getState().todos.find((t) => t.id === a.id)?.status).toBe("blocked");
+		expect(workflowController.apply((s) => completeTodoViaVendor(s, a.id, "ok")).ok).toBe(true);
+		expect(workflowController.getState().todos.find((t) => t.id === a.id)?.status).toBe("completed");
+		expect(workflowController.apply((s) => cancelTodoViaVendor(s, b.id)).ok).toBe(true);
+		const moved = workflowController.apply((s) => moveTodo(s, c.id, 0));
 		expect(moved.ok).toBe(true);
 		if (!moved.ok) return;
-		s = moved.state;
-		expect(s.todos.sort((x, y) => x.position - y.position)[0]?.id).toBe(c.id);
-		s = removeTodo(s, c.id).state;
-		expect(s.todos.find((t) => t.id === c.id)).toBeUndefined();
+		expect(workflowController.getState().todos.sort((x, y) => x.position - y.position)[0]?.id).toBe(c.id);
+		expect(workflowController.apply((s) => removeTodoViaVendor(s, c.id)).ok).toBe(true);
+		expect(workflowController.getState().todos.find((t) => t.id === c.id)).toBeUndefined();
 	});
 });
 
 describe("qi-workflow plan transitions", () => {
+	afterEach(() => {
+		__resetState();
+		workflowController.resetSession("sess_test");
+	});
+
 	it("starts, edits, updates sections, marks ready, discards", () => {
 		let s = startPlan(state(), "Explore auth").state;
 		expect(s.plan?.status).toBe("draft");
@@ -142,7 +156,6 @@ describe("qi-workflow plan transitions", () => {
 		expect(markPlanReady(s).ok).toBe(true);
 		s = markPlanReady(s).state;
 		expect(s.plan?.status).toBe("ready");
-		s = discardPlan(createEmptyState("x")).ok ? discardPlan(createEmptyState("x")).state : s;
 		const discarded = discardPlan(startPlan(state(), "x").state);
 		expect(discarded.ok && discarded.state.plan?.status).toBe("discarded");
 	});
@@ -151,14 +164,16 @@ describe("qi-workflow plan transitions", () => {
 		const s = startPlan(state(), "No steps").state;
 		expect(markPlanReady(s).ok).toBe(false);
 		expect(planFromAssistantProse(s, "Plan is ready").ok).toBe(false);
-		expect(executePlanToTodos(s).ok).toBe(false);
+		workflowController.store.replaceState(s, false);
+		expect(workflowController.apply((st) => executePlanToTodosViaVendor(st)).ok).toBe(false);
 	});
 
 	it("executes ready plan to todos and preserves conversion target", () => {
-		let s = startPlan(state(), "Implement feature").state;
-		s = updatePlanSections(s, { steps: ["One", "Two"] }).state;
-		s = markPlanReady(s).state;
-		const executed = executePlanToTodos(s);
+		workflowController.resetSession("sess_test");
+		workflowController.apply((s) => startPlan(s, "Implement feature"));
+		workflowController.apply((s) => updatePlanSections(s, { steps: ["One", "Two"] }));
+		workflowController.apply((s) => markPlanReady(s));
+		const executed = workflowController.apply((s) => executePlanToTodosViaVendor(s));
 		expect(executed.ok).toBe(true);
 		if (!executed.ok) return;
 		expect(executed.state.plan?.status).toBe("executing");

@@ -11,6 +11,7 @@ export interface McpPanelApi {
 	enable(name: string): Promise<void>;
 	disable(name: string): Promise<void>;
 	reconnect(name: string): Promise<void>;
+	auth?(name: string): Promise<{ ok: boolean; message: string }>;
 	/** Return inspect text (tools, source, errors). */
 	inspect(name: string): Promise<string>;
 }
@@ -45,6 +46,8 @@ class McpPanel implements Component {
 	private detailMode = false;
 	private inspectText = "";
 	private message = "";
+	private filter = "";
+	private filterMode = false;
 	private cachedWidth?: number;
 	private cachedLines?: string[];
 	private unsubscribe: (() => void) | undefined;
@@ -66,7 +69,15 @@ class McpPanel implements Component {
 	}
 
 	private servers(): McpServerState[] {
-		return this.controller.getState().mcpServers;
+		const all = this.controller.getState().mcpServers;
+		const q = this.filter.trim().toLowerCase();
+		if (!q) return all;
+		return all.filter(
+			(s) =>
+				s.name.toLowerCase().includes(q) ||
+				s.status.toLowerCase().includes(q) ||
+				(s.error?.toLowerCase().includes(q) ?? false),
+		);
 	}
 
 	private refresh(): void {
@@ -74,7 +85,7 @@ class McpPanel implements Component {
 		this.tui.requestRender();
 	}
 
-	private async runAction(action: "enable" | "disable" | "reconnect" | "inspect"): Promise<void> {
+	private async runAction(action: "enable" | "disable" | "reconnect" | "inspect" | "auth"): Promise<void> {
 		const server = this.servers()[this.index];
 		if (!server) return;
 		try {
@@ -89,6 +100,13 @@ class McpPanel implements Component {
 			} else if (action === "reconnect") {
 				await this.mcpApi.reconnect(server.name);
 				this.message = `Reconnecting ${server.name}…`;
+			} else if (action === "auth") {
+				if (!this.mcpApi.auth) {
+					this.message = "Auth not available";
+				} else {
+					const result = await this.mcpApi.auth(server.name);
+					this.message = result.message;
+				}
 			} else {
 				this.inspectText = await this.mcpApi.inspect(server.name);
 				this.detailMode = true;
@@ -101,6 +119,26 @@ class McpPanel implements Component {
 	}
 
 	handleInput(data: string): void {
+		if (this.filterMode) {
+			if (matchesKey(data, "escape") || matchesKey(data, "enter") || matchesKey(data, "return")) {
+				this.filterMode = false;
+				this.refresh();
+				return;
+			}
+			if (matchesKey(data, "backspace")) {
+				this.filter = this.filter.slice(0, -1);
+				this.index = 0;
+				this.refresh();
+				return;
+			}
+			if (data.length === 1 && data.charCodeAt(0) >= 32) {
+				this.filter += data;
+				this.index = 0;
+				this.refresh();
+			}
+			return;
+		}
+
 		if (matchesKey(data, "escape") || matchesKey(data, "ctrl+c")) {
 			if (this.detailMode) {
 				this.detailMode = false;
@@ -109,6 +147,12 @@ class McpPanel implements Component {
 				return;
 			}
 			this.done();
+			return;
+		}
+
+		if (data === "/" || data === "f" || data === "F") {
+			this.filterMode = true;
+			this.refresh();
 			return;
 		}
 
@@ -126,6 +170,7 @@ class McpPanel implements Component {
 		if (data === "e" || data === "E") void this.runAction("enable");
 		else if (data === "d" || data === "D") void this.runAction("disable");
 		else if (data === "r" || data === "R") void this.runAction("reconnect");
+		else if (data === "a" || data === "A") void this.runAction("auth");
 		else if (data === "i" || data === "I" || matchesKey(data, "enter") || matchesKey(data, "return")) {
 			void this.runAction("inspect");
 		}
@@ -141,6 +186,10 @@ class McpPanel implements Component {
 
 		lines.push(th.fg("accent", "─".repeat(w)));
 		lines.push(truncateToWidth(th.fg("accent", " MCP "), w));
+		if (this.filter || this.filterMode) {
+			const cursor = this.filterMode ? th.fg("accent", "▌") : "";
+			lines.push(truncateToWidth(th.fg("muted", `filter: ${this.filter}${cursor}`), w));
+		}
 		lines.push("");
 
 		if (servers.length === 0) {
@@ -200,7 +249,12 @@ class McpPanel implements Component {
 		}
 
 		lines.push("");
-		lines.push(truncateToWidth(th.fg("dim", "↑↓ · e enable · d disable · r reconnect · i inspect · Esc close"), w));
+		lines.push(
+			truncateToWidth(
+				th.fg("dim", "↑↓ · e enable · d disable · r reconnect · a auth · i inspect · / filter · Esc close"),
+				w,
+			),
+		);
 		lines.push(th.fg("accent", "─".repeat(w)));
 
 		this.cachedWidth = width;
@@ -231,7 +285,7 @@ async function narrowMcpSelect(
 	if (!choice) return;
 	const server = servers.find((s) => choice.startsWith(s.name));
 	if (!server) return;
-	const action = await ctx.ui.select(`${server.name}`, ["Enable", "Disable", "Reconnect", "Inspect", "Close"]);
+	const action = await ctx.ui.select(`${server.name}`, ["Enable", "Disable", "Reconnect", "Auth", "Inspect", "Close"]);
 	if (!action || action === "Close") return;
 	try {
 		if (action === "Enable") {
@@ -242,6 +296,9 @@ async function narrowMcpSelect(
 			await mcpApi.disable(server.name);
 		} else if (action === "Reconnect") {
 			await mcpApi.reconnect(server.name);
+		} else if (action === "Auth") {
+			const result = await mcpApi.auth?.(server.name);
+			ctx.ui.notify(result?.message ?? "Auth not available", result?.ok === false ? "error" : "info");
 		} else {
 			const text = await mcpApi.inspect(server.name);
 			await ctx.ui.select("Inspect", text.split("\n").slice(0, 30));

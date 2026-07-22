@@ -2,25 +2,24 @@ import type { AutocompleteItem } from "@earendil-works/pi-tui";
 import type { ExtensionAPI, ExtensionCommandContext } from "../../../core/extensions/types.ts";
 import {
 	addTodoViaVendor,
-	mutateTodoViaVendor,
-	pauseGoalViaVendor,
+	blockTodoViaVendor,
+	cancelTodoViaVendor,
+	completeTodoViaVendor,
+	executePlanToTodosViaVendor,
+	removeTodoViaVendor,
 	resolveVendorTodoId,
-	resumeGoalViaVendor,
-	setGoalViaVendor,
+	startTodoViaVendor,
 } from "../adapters/index.ts";
 import { workflowController } from "../controller.ts";
 import {
 	attachTask,
-	blockTodo,
 	cancelTask,
-	clearGoal,
 	createWorkflow,
 	discardPlan,
-	editGoal,
 	editPlanGoal,
-	executePlanToTodos,
 	executePlanToWorkflow,
 	markPlanReady,
+	setBoardCollapsed,
 	startPlan,
 	type WorkflowMode,
 } from "../domain/index.ts";
@@ -30,11 +29,13 @@ import {
 	getWorkflowPromise,
 	listRewindCheckpoints,
 	mcpManager,
+	previewRewindCheckpoint,
 	requestCancelWorkflow,
 	restoreRewind,
 	runBtwSideTurn,
 	runExistingWorkflow,
 	runWorkflow,
+	undoLastRewind,
 } from "../runtime/index.ts";
 import {
 	openDashboard,
@@ -66,30 +67,32 @@ function todoIdCompletions(prefix: string): AutocompleteItem[] | null {
 
 /** Second-level completions: actions, then todo ids where applicable. */
 function todoArgumentCompletions(prefix: string): AutocompleteItem[] | null {
-	const actions = ["add", "start", "block", "done", "cancel", "remove", "move"];
+	const actions = ["add", "start", "block", "done", "cancel", "remove", "list"];
 	const spaceIndex = prefix.indexOf(" ");
 	if (spaceIndex === -1) {
 		return completions(prefix.trim(), actions);
 	}
 	const action = prefix.slice(0, spaceIndex).trim();
-	if (!actions.includes(action) || action === "add") {
+	if (!actions.includes(action) || action === "add" || action === "list") {
 		return null;
 	}
 	const rest = prefix.slice(spaceIndex + 1);
-	if (action === "move") {
-		const moveSpace = rest.indexOf(" ");
-		if (moveSpace === -1) {
-			return todoIdCompletions(rest.trimStart());
-		}
-		// Position hints after id
-		return completions(rest.slice(moveSpace + 1).trimStart(), ["0", "1", "2", "3", "4", "5"]);
-	}
-	// id-taking actions; allow optional trailing text without further completions
 	const idSpace = rest.indexOf(" ");
 	if (idSpace === -1) {
 		return todoIdCompletions(rest.trimStart());
 	}
 	return null;
+}
+
+async function offerPlanReadyMenu(ctx: ExtensionCommandContext): Promise<void> {
+	if (!ctx.hasUI) return;
+	const choice = await ctx.ui.select("Plan is ready", ["Execute now", "Open dashboard", "Stay in plan"]);
+	if (!choice || choice === "Stay in plan") return;
+	if (choice === "Open dashboard") {
+		await openDashboard(ctx, workflowController, "plan");
+		return;
+	}
+	await handlePlanExecute(ctx);
 }
 
 function firstToken(args: string): { cmd: string; rest: string } {
@@ -122,20 +125,6 @@ function formatCleanupReport(report: {
 		if (cat.paths.length > 5) lines.push(`    …${cat.paths.length - 5} more`);
 	}
 	return lines.join("\n");
-}
-
-function goalStatusText(): string {
-	const goal = workflowController.getState().goal;
-	if (!goal) return "No active goal. Use /goal <objective> to set one.";
-	const bits = [`Goal ${shortId(goal.id)} [${goal.status}]`, goal.objective];
-	if (goal.blockReason) bits.push(`Blocked: ${goal.blockReason}`);
-	if (goal.completionEvidence) bits.push(`Evidence: ${goal.completionEvidence}`);
-	const todos = workflowController.getState().todos.filter((t) => t.goalId === goal.id);
-	if (todos.length) {
-		const open = todos.filter((t) => t.status !== "completed" && t.status !== "cancelled").length;
-		bits.push(`Todos: ${open} open / ${todos.length} total`);
-	}
-	return bits.join("\n");
 }
 
 /**
@@ -189,7 +178,7 @@ async function handlePlanExecute(ctx: ExtensionCommandContext): Promise<void> {
 	if (!choice || choice === "Cancel") return;
 
 	if (choice === "Create Todos") {
-		const result = workflowController.apply((state) => executePlanToTodos(state));
+		const result = workflowController.apply((state) => executePlanToTodosViaVendor(state));
 		notifyResult(
 			ctx,
 			result.ok,
@@ -204,49 +193,10 @@ async function handlePlanExecute(ctx: ExtensionCommandContext): Promise<void> {
 }
 
 export function registerQiWorkflowCommands(pi: ExtensionAPI): void {
-	pi.registerCommand("goal", {
-		description: "Show, set, pause, resume, clear, or edit the session goal",
-		category: "start",
-		argumentHint: "<objective> | edit <objective> | pause | resume | clear",
-		getArgumentCompletions: (prefix) => completions(prefix, ["pause", "resume", "clear", "edit"]),
-		handler: async (args, ctx) => {
-			const trimmed = args.trim();
-			if (!trimmed) {
-				ctx.ui.notify(goalStatusText(), "info");
-				return;
-			}
-			const { cmd, rest } = firstToken(trimmed);
-			if (cmd === "pause") {
-				const r = workflowController.apply((s) => pauseGoalViaVendor(s));
-				notifyResult(ctx, r.ok, r.ok ? "Goal paused." : r.error);
-				return;
-			}
-			if (cmd === "resume") {
-				const r = workflowController.apply((s) => resumeGoalViaVendor(s));
-				notifyResult(ctx, r.ok, r.ok ? "Goal resumed." : r.error);
-				return;
-			}
-			if (cmd === "clear") {
-				const r = workflowController.apply((s) => clearGoal(s));
-				notifyResult(ctx, r.ok, r.ok ? "Goal cleared." : r.error);
-				return;
-			}
-			if (cmd === "edit") {
-				if (!rest) {
-					notifyResult(ctx, false, "Usage: /goal edit <objective>");
-					return;
-				}
-				const r = workflowController.apply((s) => editGoal(s, rest));
-				notifyResult(ctx, r.ok, r.ok ? "Goal updated." : r.error);
-				return;
-			}
-			const r = workflowController.apply((s) => setGoalViaVendor(s, trimmed));
-			notifyResult(ctx, r.ok, r.ok ? `Goal set: ${r.value.objective}` : r.error);
-		},
-	});
+	// /goal is registered by attachGoalLifecycle (mature pi-goal command + --tokens/queue).
 
 	pi.registerCommand("todos", {
-		description: "Open the Qi dashboard Todo tab",
+		description: "Open dashboard Todo tab (list, detail, reorder, actions)",
 		category: "work",
 		handler: async (_args, ctx) => {
 			if (!requireUi(ctx, "todos")) return;
@@ -255,17 +205,22 @@ export function registerQiWorkflowCommands(pi: ExtensionAPI): void {
 	});
 
 	pi.registerCommand("todo", {
-		description: "Manage todos: add|start|block|done|cancel|remove|move",
+		description: "Mutate todos: add|start|block|done|cancel|remove|list (reorder in /todos dashboard)",
 		category: "work",
-		argumentHint: "add <text> | start <id> | block <id> <reason> | done <id> [verification] | …",
+		argumentHint: "add <text> | start <id> | block <id> <reason> | done <id> [verification] | list",
 		getArgumentCompletions: todoArgumentCompletions,
 		handler: async (args, ctx) => {
 			const { cmd, rest } = firstToken(args);
 			if (!cmd) {
-				notifyResult(ctx, false, "Usage: /todo add|start|block|done|cancel|remove|move …");
+				notifyResult(ctx, false, "Usage: /todo add|start|block|done|cancel|remove|list …");
 				return;
 			}
 			switch (cmd) {
+				case "list": {
+					if (!requireUi(ctx, "todo")) return;
+					await openDashboard(ctx, workflowController, "todo");
+					return;
+				}
 				case "add": {
 					if (!rest) {
 						notifyResult(ctx, false, "Usage: /todo add <text>");
@@ -285,9 +240,7 @@ export function registerQiWorkflowCommands(pi: ExtensionAPI): void {
 						notifyResult(ctx, false, `Unknown todo id: ${rest}`);
 						return;
 					}
-					const r = workflowController.apply((s) =>
-						mutateTodoViaVendor(s, "update", { id: vendorId, status: "in_progress" }),
-					);
+					const r = workflowController.apply((s) => startTodoViaVendor(s, rest));
 					notifyResult(ctx, r.ok, r.ok ? `Started ${shortId(rest)}` : r.error);
 					return;
 				}
@@ -297,8 +250,7 @@ export function registerQiWorkflowCommands(pi: ExtensionAPI): void {
 						notifyResult(ctx, false, "Usage: /todo block <id> <reason>");
 						return;
 					}
-					// Vendor TaskStatus has no blocked; keep Qi projection field for board.
-					const r = workflowController.apply((s) => blockTodo(s, id, reason));
+					const r = workflowController.apply((s) => blockTodoViaVendor(s, id, reason));
 					notifyResult(ctx, r.ok, r.ok ? `Blocked ${shortId(r.value.id)}` : r.error);
 					return;
 				}
@@ -313,13 +265,7 @@ export function registerQiWorkflowCommands(pi: ExtensionAPI): void {
 						notifyResult(ctx, false, `Unknown todo id: ${id}`);
 						return;
 					}
-					const r = workflowController.apply((s) =>
-						mutateTodoViaVendor(s, "update", {
-							id: vendorId,
-							status: "completed",
-							metadata: verification ? { verification } : undefined,
-						}),
-					);
+					const r = workflowController.apply((s) => completeTodoViaVendor(s, id, verification));
 					notifyResult(ctx, r.ok, r.ok ? `Done ${shortId(id)}` : r.error);
 					return;
 				}
@@ -329,12 +275,10 @@ export function registerQiWorkflowCommands(pi: ExtensionAPI): void {
 						notifyResult(ctx, false, `Usage: /todo ${cmd} <id>`);
 						return;
 					}
-					const vendorId = resolveVendorTodoId(rest);
-					if (vendorId === undefined) {
-						notifyResult(ctx, false, `Unknown todo id: ${rest}`);
-						return;
-					}
-					const r = workflowController.apply((s) => mutateTodoViaVendor(s, "delete", { id: vendorId }));
+					const r =
+						cmd === "cancel"
+							? workflowController.apply((s) => cancelTodoViaVendor(s, rest))
+							: workflowController.apply((s) => removeTodoViaVendor(s, rest));
 					notifyResult(
 						ctx,
 						r.ok,
@@ -343,7 +287,7 @@ export function registerQiWorkflowCommands(pi: ExtensionAPI): void {
 					return;
 				}
 				case "move": {
-					notifyResult(ctx, false, "Use the todo tool or dashboard to reorder; vendor store is id-based.");
+					notifyResult(ctx, false, "Reorder todos in /todos dashboard (Move up / Move down).");
 					return;
 				}
 				default:
@@ -352,11 +296,29 @@ export function registerQiWorkflowCommands(pi: ExtensionAPI): void {
 		},
 	});
 
+	pi.registerCommand("board", {
+		description: "Expand or collapse the above-editor work board",
+		category: "work",
+		argumentHint: "expand | collapse | toggle",
+		getArgumentCompletions: (prefix) => completions(prefix.trim(), ["expand", "collapse", "toggle"]),
+		handler: async (args, ctx) => {
+			const cmd = args.trim() || "toggle";
+			const collapsed = workflowController.getState().boardCollapsed;
+			const next = cmd === "expand" ? false : cmd === "collapse" ? true : cmd === "toggle" ? !collapsed : undefined;
+			if (next === undefined) {
+				notifyResult(ctx, false, "Usage: /board expand|collapse|toggle");
+				return;
+			}
+			const r = workflowController.apply((s) => setBoardCollapsed(s, next));
+			notifyResult(ctx, r.ok, r.ok ? (next ? "Board collapsed." : "Board expanded.") : r.error);
+		},
+	});
+
 	pi.registerCommand("plan", {
-		description: "Plan mode: open dashboard, start, edit, ready, execute, discard",
+		description: "Plan mode: open dashboard, start, edit, ready, finalize, execute, discard",
 		category: "start",
-		argumentHint: "<goal> | edit <goal> | ready | execute | discard",
-		getArgumentCompletions: (prefix) => completions(prefix, ["edit", "ready", "execute", "discard"]),
+		argumentHint: "<goal> | edit <goal> | ready | finalize | execute | discard",
+		getArgumentCompletions: (prefix) => completions(prefix, ["edit", "ready", "finalize", "execute", "discard"]),
 		handler: async (args, ctx) => {
 			const trimmed = args.trim();
 			if (!trimmed) {
@@ -374,9 +336,10 @@ export function registerQiWorkflowCommands(pi: ExtensionAPI): void {
 				notifyResult(ctx, r.ok, r.ok ? "Plan goal updated." : r.error);
 				return;
 			}
-			if (cmd === "ready") {
+			if (cmd === "ready" || cmd === "finalize") {
 				const r = workflowController.apply((s) => markPlanReady(s));
 				notifyResult(ctx, r.ok, r.ok ? "Plan marked ready." : r.error);
+				if (r.ok) await offerPlanReadyMenu(ctx);
 				return;
 			}
 			if (cmd === "execute") {
@@ -586,13 +549,28 @@ export function registerQiWorkflowCommands(pi: ExtensionAPI): void {
 				ctx.ui.notify("Structured question has priority over /btw", "warning");
 				return;
 			}
+			const abort = new AbortController();
+			const linked =
+				ctx.signal && typeof AbortSignal !== "undefined" && "any" in AbortSignal
+					? AbortSignal.any([ctx.signal, abort.signal])
+					: abort.signal;
 			try {
-				ctx.ui.notify("Running /btw side turn…", "info");
-				await runBtwSideTurn(question, { cwd: ctx.cwd, model: ctx.model, signal: ctx.signal, ctx });
+				const turnPromise = runBtwSideTurn(question, {
+					cwd: ctx.cwd,
+					model: ctx.model,
+					signal: linked,
+					ctx,
+				});
 				if (ctx.hasUI && ctx.mode === "tui") {
-					await showBtwOverlay(ctx, workflowController);
+					await Promise.resolve();
+					await showBtwOverlay(ctx, workflowController, { onAbort: () => abort.abort() });
+					try {
+						await turnPromise;
+					} catch {
+						// aborted or failed — overlay already closed
+					}
 				} else {
-					const answer = workflowController.getState().btw?.answer;
+					const answer = await turnPromise;
 					ctx.ui.notify(answer ? `btw: ${answer.slice(0, 200)}` : "btw finished.", "info");
 				}
 			} catch (err) {
@@ -695,6 +673,7 @@ export function registerQiWorkflowCommands(pi: ExtensionAPI): void {
 				reconnect: async (name) => {
 					await mcpManager.reconnect(name, ctx.cwd);
 				},
+				auth: async (name) => mcpManager.auth(name, ctx.cwd),
 				inspect: async (name) => {
 					const info = mcpManager.inspect(name);
 					if (!info) return `Server not found: ${name}`;
@@ -715,9 +694,8 @@ export function registerQiWorkflowCommands(pi: ExtensionAPI): void {
 	});
 
 	pi.registerCommand("rewind", {
-		description: "Open the rewind / restore panel",
+		description: "Open the rewind / restore panel (checkpoints, preview, undo)",
 		category: "session",
-		hidden: true,
 		handler: async (_args, ctx) => {
 			if (!requireUi(ctx, "rewind")) return;
 			const checkpoints = listRewindCheckpoints();
@@ -738,23 +716,32 @@ export function registerQiWorkflowCommands(pi: ExtensionAPI): void {
 						cwd: ctx.cwd,
 					});
 				},
+				preview: async (checkpointId) => {
+					const cp = workflowController
+						.getState()
+						.rewindCheckpoints.find((c) => c.id === checkpointId || c.id.endsWith(checkpointId));
+					if (!cp?.gitRef) return "(no git ref for preview)";
+					return previewRewindCheckpoint(ctx.cwd, cp.gitRef);
+				},
+				undoLast: async () => {
+					await undoLastRewind(ctx.cwd);
+				},
 			});
 		},
 	});
 
 	pi.registerCommand("cleanup", {
-		description: "Dry-run cleanup report; use --apply in headless to delete",
+		description: "Scan and apply cleanup of regenerable agent cruft",
 		category: "session",
-		hidden: true,
+		argumentHint: "[--apply]",
 		getArgumentCompletions: (prefix) => completions(prefix, ["--apply", "apply"]),
 		handler: async (args, ctx) => {
 			const wantApply = /(?:^|\s)(--apply|apply)(?:\s|$)/i.test(args);
 			const opts = { currentSessionFile: ctx.sessionManager.getSessionFile() };
 			try {
-				const report = await dryRunCleanup(opts);
 				if (isHeadless(ctx)) {
-					const text = formatCleanupReport(report);
-					console.log(text);
+					const report = await dryRunCleanup(opts);
+					console.log(formatCleanupReport(report));
 					ctx.ui.notify(report.summary, "info");
 					if (wantApply) {
 						const applied = await applyLastCleanupReport(opts);
@@ -763,6 +750,7 @@ export function registerQiWorkflowCommands(pi: ExtensionAPI): void {
 					}
 					return;
 				}
+				if (!requireUi(ctx, "cleanup")) return;
 				await showCleanupPanel(ctx, workflowController, {
 					dryRun: async () => {
 						const r = await dryRunCleanup(opts);

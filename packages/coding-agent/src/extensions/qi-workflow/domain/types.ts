@@ -50,6 +50,14 @@ export interface Goal extends EntityMeta {
 	iteration: number;
 	/** Bound continuation: only one in-flight ticket per goalId+iteration. */
 	continuationTicket?: string;
+	/** Accounting projected from GoalRuntime ActiveGoal (source of truth). */
+	tokenBudget?: number;
+	tokensUsed: number;
+	timeUsedSeconds: number;
+	baselineTokens: number;
+	activeStartedAt?: number;
+	/** Raw vendor status when distinct from Qi GoalStatus (budget/usage/queued). */
+	vendorStatus?: string;
 }
 
 export interface TodoItem extends EntityMeta {
@@ -60,6 +68,12 @@ export interface TodoItem extends EntityMeta {
 	taskIds: string[];
 	blockReason?: string;
 	verification?: string;
+	/** Vendor numeric task id for graph ops (blockedBy / activeForm). */
+	vendorId?: number;
+	activeForm?: string;
+	blockedBy?: number[];
+	description?: string;
+	owner?: string;
 }
 
 export interface PlanSections {
@@ -123,6 +137,8 @@ export interface JobEntity extends EntityMeta {
 export interface QuestionOption {
 	label: string;
 	description?: string;
+	/** Optional preview shown when the option is focused (ask overlay). */
+	preview?: string;
 }
 
 export interface StructuredQuestion extends EntityMeta {
@@ -132,8 +148,12 @@ export interface StructuredQuestion extends EntityMeta {
 	options: QuestionOption[];
 	multiSelect?: boolean;
 	allowFreeInput?: boolean;
+	/** 1-based index when part of a multi-question ask sequence. */
+	questionIndex?: number;
+	questionCount?: number;
 	selected?: string[];
 	freeInput?: string;
+	notes?: string;
 	answerSummary?: string;
 }
 

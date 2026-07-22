@@ -41,7 +41,12 @@ describe("qi-workflow built-in interactive smoke", () => {
 		// llama.cpp is hidden; qi-workflow must be present among built-ins
 		expect(builtInExtensions.some((ext) => ext.name === "qi-workflow")).toBe(true);
 
-		await harness.session.prompt("/goal Smoke the workflow layer");
+		const { getGoalRuntime } = await import("../../src/extensions/qi-workflow/runtime/goal-lifecycle.ts");
+		const { createGoal } = await import("../../src/extensions/qi-workflow/vendor/goal/runtime.ts");
+		const runtime = getGoalRuntime();
+		expect(runtime).toBeTruthy();
+		runtime!.activeGoal = createGoal("Smoke the workflow layer", undefined, 0);
+		runtime!.persistGoal(runtime!.activeGoal);
 		expect(workflowController.getState().goal?.objective).toBe("Smoke the workflow layer");
 
 		await harness.session.prompt("/todo add First smoke todo");
@@ -66,7 +71,9 @@ describe("qi-workflow built-in interactive smoke", () => {
 
 		await harness.session.prompt("/goal pause");
 		expect(workflowController.getState().goal?.status).toBe("paused");
-		await harness.session.prompt("/goal resume");
+		const { transitionGoal } = await import("../../src/extensions/qi-workflow/vendor/goal/runtime.ts");
+		runtime!.activeGoal = transitionGoal(runtime!.activeGoal!, "active");
+		runtime!.persistGoal(runtime!.activeGoal);
 		expect(workflowController.getState().goal?.status).toBe("active");
 
 		// Slash catalog: Qi commands are categorized and argument-completable.

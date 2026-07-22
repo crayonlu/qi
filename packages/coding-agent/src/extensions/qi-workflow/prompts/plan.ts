@@ -10,4 +10,4 @@ While planning, avoid mutating the workspace (edits, installs, destructive comma
 
 Use the plan_update tool to record discoveries, assumptions, decisions, steps, verification, and unresolved questions. Use ask_user_question only for important preferences or tradeoffs that cannot be inferred from the workspace.
 
-Never mark the plan ready in ordinary prose. The user runs /plan ready (typed transition) when the plan is complete. Do not claim the plan is ready or executed unless those commands have been used.`;
+When the plan is decision-ready, call plan_mode_complete with the full Markdown plan body (this marks the plan ready and ends the turn). The user may also run /plan ready. Do not claim the plan is executed unless /plan execute (or an equivalent conversion) has been used.`;

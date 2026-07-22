@@ -23,29 +23,24 @@ import {
 	selfTest,
 } from "../vendor/cleanup/cleanup.ts";
 
-const MAX_PATHS = 20;
-
 export interface CleanupScanOptions {
-	/** Defaults to parent of getAgentDir() (~/.pi). */
 	root?: string;
-	currentSessionFile?: string;
+	currentSessionFile?: string | null;
 }
 
 function resolveRoot(root?: string): string {
 	if (root) return root;
-	const agentDir = getAgentDir();
-	const parent = dirname(agentDir);
-	return parent.endsWith("/.pi") || parent.endsWith(".pi") ? parent : join(process.env.HOME ?? "", ".pi");
+	return dirname(getAgentDir());
 }
 
 function toCategory(id: string, label: string, findings: Finding[]): CleanupCategoryReport {
-	const limited = findings.slice(0, MAX_PATHS);
+	// Store ALL paths so apply cannot silently drop findings. UI may truncate display.
 	return {
 		id,
 		label,
 		count: findings.length,
 		bytes: findings.reduce((sum, item) => sum + item.size, 0),
-		paths: limited.map((item) => item.path),
+		paths: findings.map((item) => item.path),
 	};
 }
 

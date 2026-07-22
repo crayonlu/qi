@@ -21,9 +21,11 @@ class BtwOverlay implements Component {
 	private controller: WorkflowController;
 	private done: (result: BtwCloseResult) => void;
 	private sessionCtx?: ExtensionContext;
+	private onAbort?: () => void;
 	private scrollOffset = 0;
 	private cachedWidth?: number;
 	private cachedLines?: string[];
+	private unsubscribe: (() => void) | undefined;
 
 	constructor(
 		tui: TUI,
@@ -31,12 +33,22 @@ class BtwOverlay implements Component {
 		controller: WorkflowController,
 		done: (result: BtwCloseResult) => void,
 		sessionCtx?: ExtensionContext,
+		onAbort?: () => void,
 	) {
 		this.tui = tui;
 		this.theme = theme;
 		this.controller = controller;
 		this.done = done;
 		this.sessionCtx = sessionCtx;
+		this.onAbort = onAbort;
+		this.unsubscribe = controller.subscribe(() => {
+			this.invalidate();
+			this.tui.requestRender();
+		});
+	}
+
+	dispose(): void {
+		this.unsubscribe?.();
 	}
 
 	private draft(): BtwDraft | null {
@@ -50,6 +62,12 @@ class BtwOverlay implements Component {
 
 	handleInput(data: string): void {
 		if (matchesKey(data, "escape") || matchesKey(data, "ctrl+c")) {
+			const btw = this.draft();
+			if (btw && !btw.answer && this.onAbort) {
+				this.onAbort();
+				this.done({});
+				return;
+			}
 			this.done({});
 			return;
 		}
@@ -74,11 +92,10 @@ class BtwOverlay implements Component {
 		}
 		if (data === "a" || data === "A") {
 			const btw = this.draft();
-			if (!btw) {
-				this.done({});
+			if (!btw?.answer) {
 				return;
 			}
-			const summary = [`[btw] ${btw.question}`, btw.answer ?? "(no answer yet)"].join("\n");
+			const summary = [`[btw] ${btw.question}`, btw.answer].join("\n");
 			this.controller.apply((state) => clearBtw(state));
 			this.done({ attachSummary: summary });
 		}
@@ -111,12 +128,22 @@ class BtwOverlay implements Component {
 				lines.push(...wrapTextWithAnsi(th.fg("text", btw.answer), w));
 			} else {
 				lines.push("");
-				lines.push(truncateToWidth(th.fg("dim", "… waiting for answer"), w));
+				lines.push(truncateToWidth(th.fg("dim", "… waiting for answer (Esc abort)"), w));
 			}
 		}
 
 		lines.push("");
-		lines.push(truncateToWidth(th.fg("dim", "↑↓ scroll · a attach summary · x clear · Esc close"), w));
+		lines.push(
+			truncateToWidth(
+				th.fg(
+					"dim",
+					btw && !btw.answer
+						? "↑↓ scroll · Esc abort · x clear"
+						: "↑↓ scroll · a attach summary · x clear · Esc close",
+				),
+				w,
+			),
+		);
 		lines.push(th.fg("accent", "─".repeat(w)));
 
 		const rows = (this.tui as TUI & { terminal?: { rows?: number } }).terminal?.rows ?? 24;
@@ -142,11 +169,12 @@ class BtwOverlay implements Component {
 
 /**
  * Show /btw overlay. If a structured question is open, does not show (question priority).
- * Draft is preserved when hiddenByQuestion — caller should re-open after question closes.
+ * When `onAbort` is set, Esc during a pending answer aborts the in-flight side turn.
  */
 export async function showBtwOverlay(
 	ctx: { ui: ExtensionUIContext } & Partial<ExtensionContext>,
 	controller: WorkflowController,
+	opts?: { onAbort?: () => void },
 ): Promise<void> {
 	const state = controller.getState();
 	if (state.question?.status === "open") {
@@ -165,7 +193,7 @@ export async function showBtwOverlay(
 	const sessionCtx = "sessionManager" in ctx && ctx.sessionManager ? (ctx as ExtensionContext) : undefined;
 
 	const result = await ctx.ui.custom<BtwCloseResult>(
-		(tui, theme, _kb, done) => new BtwOverlay(tui, theme, controller, done, sessionCtx),
+		(tui, theme, _kb, done) => new BtwOverlay(tui, theme, controller, done, sessionCtx, opts?.onAbort),
 		{ overlay: true, overlayOptions: OVERLAY_OPTIONS },
 	);
 

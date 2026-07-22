@@ -9,6 +9,7 @@ import { addRewindCheckpoint, type RestoreScope, type RewindCheckpoint } from ".
 import {
 	type CheckpointData,
 	createCheckpoint,
+	diffCheckpoints,
 	loadCheckpointFromRef,
 	MUTATING_TOOLS,
 	REF_BASE,
@@ -33,6 +34,7 @@ export interface RewindRestoreOptions {
 }
 
 let turnIndex = 0;
+let lastBeforeRestore: CheckpointData | null = null;
 
 function nextCheckpointId(label: string): string {
 	const stamp = Date.now().toString(36);
@@ -131,7 +133,7 @@ export async function restoreRewind(
 		} else {
 			try {
 				// Safety snapshot before mutating the worktree.
-				await createCheckpoint({
+				lastBeforeRestore = await createCheckpoint({
 					root: cwd,
 					id: nextCheckpointId("before-restore"),
 					sessionId: ctx.sessionManager.getSessionId(),
@@ -163,4 +165,19 @@ export async function restoreRewind(
 
 export function listRewindCheckpoints(): RewindCheckpoint[] {
 	return workflowController.getState().rewindCheckpoints.slice();
+}
+
+/** Diff working tree vs checkpoint (files preview). */
+export async function previewRewindCheckpoint(cwd: string, gitRef: string): Promise<string> {
+	const id = checkpointIdFromGitRef(gitRef);
+	const data = await loadCheckpointFromRef(cwd, id);
+	if (!data?.worktreeTreeSha) return "(no tree for preview)";
+	return diffCheckpoints(cwd, data.worktreeTreeSha, "HEAD");
+}
+
+/** Restore the last before-restore safety snapshot if present. */
+export async function undoLastRewind(cwd: string): Promise<void> {
+	if (!lastBeforeRestore) throw new Error("Nothing to undo");
+	await restoreCheckpoint(cwd, lastBeforeRestore);
+	lastBeforeRestore = null;
 }

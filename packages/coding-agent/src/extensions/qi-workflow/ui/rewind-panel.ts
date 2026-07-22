@@ -7,6 +7,10 @@ import type { RestoreScope, RewindCheckpoint } from "../domain/index.ts";
 
 export interface RewindPanelApi {
 	restore(checkpointId: string, scope: RestoreScope): Promise<void>;
+	/** Optional diff preview before restore (files scope). */
+	preview?(checkpointId: string): Promise<string>;
+	/** Optional undo of last restore. */
+	undoLast?(): Promise<void>;
 }
 
 const CENTER_OVERLAY = {
@@ -32,6 +36,7 @@ class RewindPanel implements Component {
 	private index = 0;
 	private scopeIndex = 2; // all
 	private confirming = false;
+	private previewText = "";
 	private message = "";
 	private cachedWidth?: number;
 	private cachedLines?: string[];
@@ -61,12 +66,28 @@ class RewindPanel implements Component {
 			await this.rewindApi.restore(cp.id, scope);
 			this.message = `Restored ${cp.label} (${scope})`;
 			this.confirming = false;
+			this.previewText = "";
 			this.refresh();
 		} catch (err) {
 			this.message = err instanceof Error ? err.message : String(err);
 			this.confirming = false;
 			this.refresh();
 		}
+	}
+
+	private async loadPreview(): Promise<void> {
+		const cp = this.checkpoints()[this.index];
+		if (!cp || !this.rewindApi.preview) {
+			this.previewText = this.rewindApi.preview ? "" : "(preview unavailable)";
+			this.refresh();
+			return;
+		}
+		try {
+			this.previewText = await this.rewindApi.preview(cp.id);
+		} catch (err) {
+			this.previewText = err instanceof Error ? err.message : String(err);
+		}
+		this.refresh();
 	}
 
 	handleInput(data: string): void {
@@ -93,11 +114,13 @@ class RewindPanel implements Component {
 		const list = this.checkpoints();
 		if (matchesKey(data, "up")) {
 			this.index = Math.max(0, this.index - 1);
+			this.previewText = "";
 			this.refresh();
 			return;
 		}
 		if (matchesKey(data, "down")) {
 			this.index = Math.min(Math.max(0, list.length - 1), this.index + 1);
+			this.previewText = "";
 			this.refresh();
 			return;
 		}
@@ -111,10 +134,27 @@ class RewindPanel implements Component {
 			this.refresh();
 			return;
 		}
+		if (data === "p" || data === "P") {
+			void this.loadPreview();
+			return;
+		}
+		if ((data === "u" || data === "U") && this.rewindApi.undoLast) {
+			void this.rewindApi
+				.undoLast()
+				.then(() => {
+					this.message = "Undid last restore";
+					this.refresh();
+				})
+				.catch((err) => {
+					this.message = err instanceof Error ? err.message : String(err);
+					this.refresh();
+				});
+			return;
+		}
 		if (matchesKey(data, "enter") || matchesKey(data, "return") || data === "r" || data === "R") {
 			if (list.length === 0) return;
 			this.confirming = true;
-			this.refresh();
+			void this.loadPreview();
 		}
 	}
 
@@ -162,6 +202,19 @@ class RewindPanel implements Component {
 			lines.push(
 				...wrapTextWithAnsi(th.fg("warning", `Restore "${cp?.label ?? "?"}" with scope=${scope}? [y/N]`), w),
 			);
+			if (this.previewText) {
+				lines.push("");
+				lines.push(truncateToWidth(th.fg("muted", "preview:"), w));
+				for (const line of this.previewText.split("\n").slice(0, 8)) {
+					lines.push(truncateToWidth(th.fg("dim", line), w));
+				}
+			}
+		} else if (this.previewText) {
+			lines.push("");
+			lines.push(truncateToWidth(th.fg("muted", "preview:"), w));
+			for (const line of this.previewText.split("\n").slice(0, 8)) {
+				lines.push(truncateToWidth(th.fg("dim", line), w));
+			}
 		}
 
 		if (this.message) {
@@ -170,7 +223,9 @@ class RewindPanel implements Component {
 		}
 
 		lines.push("");
-		lines.push(truncateToWidth(th.fg("dim", "↑↓ checkpoint · ←→ scope · Enter restore · Esc close"), w));
+		lines.push(
+			truncateToWidth(th.fg("dim", "↑↓ checkpoint · ←→ scope · p preview · Enter restore · u undo · Esc close"), w),
+		);
 		lines.push(th.fg("accent", "─".repeat(w)));
 
 		this.cachedWidth = width;

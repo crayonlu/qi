@@ -49,7 +49,12 @@ describe("qi-workflow faux provider flows", () => {
 			extensionFactories: [{ name: "qi-workflow", factory: qiWorkflowExtension }],
 		});
 
-		workflowController.apply((s) => setGoal(s, "Ship workflow layer"));
+		const { getGoalRuntime } = await import("../../src/extensions/qi-workflow/runtime/goal-lifecycle.ts");
+		const { createGoal } = await import("../../src/extensions/qi-workflow/vendor/goal/runtime.ts");
+		const runtime = getGoalRuntime();
+		expect(runtime).toBeTruthy();
+		runtime!.activeGoal = createGoal("Ship workflow layer", undefined, 0);
+		runtime!.persistGoal(runtime!.activeGoal);
 		expect(workflowController.getState().goal?.status).toBe("active");
 		const goalId = workflowController.getState().goal!.id;
 
@@ -59,7 +64,7 @@ describe("qi-workflow faux provider flows", () => {
 		]);
 
 		harness.setResponses([
-			fauxAssistantMessage(fauxToolCall("goal_complete", { goalId, evidence: "All focused tests pass" }), {
+			fauxAssistantMessage(fauxToolCall("goal_complete", { goal_id: goalId, summary: "All focused tests pass" }), {
 				stopReason: "toolUse",
 			}),
 			fauxAssistantMessage("Goal completed with evidence."),
@@ -68,8 +73,8 @@ describe("qi-workflow faux provider flows", () => {
 		await harness.session.prompt("Please complete the goal");
 		await harness.session.agent.waitForIdle();
 
-		expect(workflowController.getState().goal?.status).toBe("completed");
-		expect(workflowController.getState().goal?.completionEvidence).toContain("focused tests");
+		// Mature pi-goal clears activeGoal after successful completion.
+		expect(workflowController.getState().goal).toBeNull();
 	});
 
 	it("does not complete a goal from ordinary assistant prose", async () => {

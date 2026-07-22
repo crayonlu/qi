@@ -3,10 +3,11 @@ import { Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 import type { ExtensionAPI } from "../../../core/extensions/types.ts";
 import {
-	addTodoViaVendor,
-	blockGoalViaVendor,
-	completeGoalViaVendor,
+	blockTodoViaVendor,
+	buildAskEnvelope,
+	clearTodosViaVendor,
 	listTodosViaVendor,
+	mapOverlayToAnswer,
 	mutateTodoViaVendor,
 	normalizePlanBody,
 	PLAN_MODE_COMPLETE_TOOL_NAME,
@@ -15,7 +16,6 @@ import {
 } from "../adapters/index.ts";
 import { workflowController } from "../controller.ts";
 import {
-	blockTodo,
 	markPlanReady,
 	openQuestion,
 	type PlanSections,
@@ -24,6 +24,8 @@ import {
 } from "../domain/index.ts";
 import { jobManager } from "../runtime/index.ts";
 import { showQuestionOverlay } from "../ui/index.ts";
+import type { QuestionAnswer } from "../vendor/ask/tool/types.ts";
+import { planModeCompleted } from "../vendor/plan/completion-tool.ts";
 
 const DETAILS_HINT = "Open /todos or the dashboard for details.";
 
@@ -49,135 +51,110 @@ function summarize(text: string, max = 120): string {
 }
 
 export function registerQiWorkflowTools(pi: ExtensionAPI): void {
-	pi.registerTool({
-		name: "goal_complete",
-		label: "Goal Complete",
-		description:
-			"Mark the active goal completed with verifiable evidence. goalId is required and must match the current goal.",
-		parameters: Type.Object({
-			goalId: Type.String({ description: "Current goal id (required; rejects if stale)" }),
-			evidence: Type.String({ description: "Completion evidence proving the objective is met" }),
-		}),
-		async execute(_toolCallId, params) {
-			const result = workflowController.apply((state) =>
-				completeGoalViaVendor(state, params.evidence, params.goalId),
-			);
-			if (!result.ok) return failResult(result.error);
-			return textResult(`Goal completed (${shortId(result.value.id)}). ${DETAILS_HINT}`, {
-				action: "goal_complete",
-				goalId: result.value.id,
-				status: result.value.status,
-			});
-		},
-		renderCall(args, theme) {
-			return new Text(
-				theme.fg("toolTitle", theme.bold("goal_complete ")) + theme.fg("muted", summarize(args.evidence, 60)),
-				0,
-				0,
-			);
-		},
-		renderResult(result, _options, theme) {
-			const text = result.content[0]?.type === "text" ? result.content[0].text : "";
-			const err = text.startsWith("Error:");
-			return new Text(theme.fg(err ? "error" : "success", summarize(text, 100)), 0, 0);
-		},
-	});
-
-	pi.registerTool({
-		name: "goal_blocked",
-		label: "Goal Blocked",
-		description: "Mark the active goal blocked with a reason. goalId is required and must match the current goal.",
-		parameters: Type.Object({
-			goalId: Type.String({ description: "Current goal id (required; rejects if stale)" }),
-			reason: Type.String({ description: "Why the goal cannot proceed" }),
-		}),
-		async execute(_toolCallId, params) {
-			const result = workflowController.apply((state) => blockGoalViaVendor(state, params.reason, params.goalId));
-			if (!result.ok) return failResult(result.error);
-			return textResult(
-				`Goal blocked (${shortId(result.value.id)}): ${summarize(params.reason, 80)}. ${DETAILS_HINT}`,
-				{ action: "goal_blocked", goalId: result.value.id, status: result.value.status },
-			);
-		},
-		renderCall(args, theme) {
-			return new Text(
-				theme.fg("toolTitle", theme.bold("goal_blocked ")) + theme.fg("warning", summarize(args.reason, 60)),
-				0,
-				0,
-			);
-		},
-		renderResult(result, _options, theme) {
-			const text = result.content[0]?.type === "text" ? result.content[0].text : "";
-			const err = text.startsWith("Error:");
-			return new Text(theme.fg(err ? "error" : "warning", summarize(text, 100)), 0, 0);
-		},
-	});
+	// goal_complete / goal_blocked are registered by attachGoalLifecycle (mature pi-goal tools).
 
 	const TodoParams = Type.Object({
-		action: StringEnum(["list", "add", "start", "block", "done", "cancel", "remove", "move"] as const, {
-			description: "Todo action",
-		}),
-		text: Type.Optional(Type.String({ description: "Todo text (add)" })),
-		id: Type.Optional(Type.String({ description: "Todo id (start/block/done/cancel/remove/move)" })),
-		reason: Type.Optional(Type.String({ description: "Block reason (block)" })),
+		action: StringEnum(
+			["list", "add", "get", "update", "start", "block", "done", "cancel", "remove", "clear", "move"] as const,
+			{ description: "Todo action" },
+		),
+		text: Type.Optional(Type.String({ description: "Todo subject (add/update)" })),
+		description: Type.Optional(Type.String({ description: "Longer description (add/update)" })),
+		owner: Type.Optional(Type.String({ description: "Owner label (add/update)" })),
+		id: Type.Optional(Type.String({ description: "Todo id" })),
+		reason: Type.Optional(Type.String({ description: "Human block reason (block)" })),
 		verification: Type.Optional(Type.String({ description: "Done verification (done)" })),
-		position: Type.Optional(Type.Number({ description: "New position index (move)" })),
+		position: Type.Optional(Type.Number({ description: "Dashboard reorder only (move)" })),
+		activeForm: Type.Optional(Type.String({ description: "In-progress form (add/update/start)" })),
+		blockedBy: Type.Optional(Type.Array(Type.Number(), { description: "Dependency task ids (create)" })),
+		addBlockedBy: Type.Optional(Type.Array(Type.Number(), { description: "Add dependency ids (update)" })),
+		removeBlockedBy: Type.Optional(Type.Array(Type.Number(), { description: "Remove dependency ids (update)" })),
+		status: Type.Optional(
+			StringEnum(["pending", "in_progress", "completed", "deleted"] as const, { description: "List filter" }),
+		),
+		includeDeleted: Type.Optional(Type.Boolean({ description: "Include deleted in list" })),
 	});
 
 	pi.registerTool({
 		name: "todo",
 		label: "Todo",
 		description:
-			"Manage session todos. Actions: list, add (text), start/block/done/cancel/remove (id), move (id, position).",
+			"Manage session todos (vendor task-graph). Actions: list/get/add/update/start/block/done/cancel/remove/clear. Results include TaskDetails for branch replay.",
 		parameters: TodoParams,
 		async execute(_toolCallId, params) {
 			switch (params.action) {
 				case "list": {
-					const listed = listTodosViaVendor();
-					const todos = workflowController.getState().todos;
-					if (listed.count === 0 && todos.length === 0) {
-						return textResult(`No todos. ${DETAILS_HINT}`, { action: "list", count: 0 });
-					}
-					const lines =
-						listed.content ||
-						todos
-							.slice()
-							.sort((a, b) => a.position - b.position)
-							.map((t) => `[${t.status}] ${shortId(t.id)} ${t.text}`)
-							.join("\n");
-					return textResult(`${lines}\n${DETAILS_HINT}`, { action: "list", count: listed.count || todos.length });
+					const listed = listTodosViaVendor({
+						status: params.status,
+						includeDeleted: params.includeDeleted,
+					});
+					return textResult(listed.content || `No todos. ${DETAILS_HINT}`, listed.details);
+				}
+				case "get": {
+					if (!params.id) return failResult("id required for get");
+					const vendorId = resolveVendorTodoId(params.id);
+					if (vendorId === undefined) return failResult(`Unknown todo id: ${params.id}`);
+					const result = workflowController.apply((state) => mutateTodoViaVendor(state, "get", { id: vendorId }));
+					if (!result.ok) return failResult(result.error);
+					return textResult(result.value.content, result.value.details);
 				}
 				case "add": {
 					if (!params.text) return failResult("text required for add");
-					const result = workflowController.apply((state) => addTodoViaVendor(state, params.text!));
+					const result = workflowController.apply((state) =>
+						mutateTodoViaVendor(state, "create", {
+							subject: params.text!,
+							description: params.description,
+							owner: params.owner,
+							activeForm: params.activeForm,
+							blockedBy: params.blockedBy,
+							metadata: state.goal?.id ? { goalId: state.goal.id } : undefined,
+						}),
+					);
 					if (!result.ok) return failResult(result.error);
-					return textResult(`Added todo ${shortId(result.value.id)}. ${DETAILS_HINT}`, {
-						action: "add",
-						id: result.value.id,
-					});
+					return textResult(result.value.content, result.value.details);
+				}
+				case "update": {
+					if (!params.id) return failResult("id required for update");
+					const vendorId = resolveVendorTodoId(params.id);
+					if (vendorId === undefined) return failResult(`Unknown todo id: ${params.id}`);
+					const result = workflowController.apply((state) =>
+						mutateTodoViaVendor(state, "update", {
+							id: vendorId,
+							subject: params.text,
+							description: params.description,
+							owner: params.owner,
+							activeForm: params.activeForm,
+							addBlockedBy: params.addBlockedBy,
+							removeBlockedBy: params.removeBlockedBy,
+						}),
+					);
+					if (!result.ok) return failResult(result.error);
+					return textResult(result.value.content, result.value.details);
 				}
 				case "start": {
 					if (!params.id) return failResult("id required for start");
 					const vendorId = resolveVendorTodoId(params.id);
 					if (vendorId === undefined) return failResult(`Unknown todo id: ${params.id}`);
 					const result = workflowController.apply((state) =>
-						mutateTodoViaVendor(state, "update", { id: vendorId, status: "in_progress" }),
+						mutateTodoViaVendor(state, "update", {
+							id: vendorId,
+							status: "in_progress",
+							activeForm: params.activeForm,
+							metadata: { qiStatus: null, qiBlockReason: null },
+						}),
 					);
 					if (!result.ok) return failResult(result.error);
-					return textResult(`Started todo ${shortId(params.id)}. ${DETAILS_HINT}`, {
-						action: "start",
-						id: params.id,
-					});
+					return textResult(result.value.content, result.value.details);
 				}
 				case "block": {
 					if (!params.id) return failResult("id required for block");
 					if (!params.reason) return failResult("reason required for block");
-					const result = workflowController.apply((state) => blockTodo(state, params.id!, params.reason!));
+					const result = workflowController.apply((state) =>
+						blockTodoViaVendor(state, params.id!, params.reason!),
+					);
 					if (!result.ok) return failResult(result.error);
-					return textResult(`Blocked todo ${shortId(result.value.id)}. ${DETAILS_HINT}`, {
-						action: "block",
-						id: result.value.id,
-					});
+					const listed = listTodosViaVendor();
+					return textResult(`Blocked todo ${shortId(params.id)}. ${DETAILS_HINT}`, listed.details);
 				}
 				case "done": {
 					if (!params.id) return failResult("id required for done");
@@ -187,14 +164,15 @@ export function registerQiWorkflowTools(pi: ExtensionAPI): void {
 						mutateTodoViaVendor(state, "update", {
 							id: vendorId,
 							status: "completed",
-							metadata: params.verification ? { verification: params.verification } : undefined,
+							metadata: {
+								qiStatus: null,
+								qiBlockReason: null,
+								...(params.verification ? { verification: params.verification } : {}),
+							},
 						}),
 					);
 					if (!result.ok) return failResult(result.error);
-					return textResult(`Completed todo ${shortId(params.id)}. ${DETAILS_HINT}`, {
-						action: "done",
-						id: params.id,
-					});
+					return textResult(result.value.content, result.value.details);
 				}
 				case "cancel":
 				case "remove": {
@@ -205,13 +183,17 @@ export function registerQiWorkflowTools(pi: ExtensionAPI): void {
 						mutateTodoViaVendor(state, "delete", { id: vendorId }),
 					);
 					if (!result.ok) return failResult(result.error);
-					return textResult(
-						`${params.action === "cancel" ? "Cancelled" : "Removed"} todo ${shortId(params.id)}. ${DETAILS_HINT}`,
-						{ action: params.action, id: params.id },
-					);
+					return textResult(result.value.content, result.value.details);
+				}
+				case "clear": {
+					const result = workflowController.apply((state) => clearTodosViaVendor(state));
+					if (!result.ok) return failResult(result.error);
+					return textResult(result.value.content, result.value.details);
 				}
 				case "move": {
-					return failResult("move is not supported via vendor task store; use dashboard reorder");
+					return failResult(
+						"Reorder in /todos dashboard (Move up / Move down); vendor store has no position field",
+					);
 				}
 				default:
 					return failResult(`Unknown action: ${String((params as { action: string }).action)}`);
@@ -304,12 +286,15 @@ export function registerQiWorkflowTools(pi: ExtensionAPI): void {
 			}
 			const result = workflowController.apply((state) => markPlanReady(state, params.revision));
 			if (!result.ok) return failResult(result.error);
-			return textResult(`Plan ready (rev ${result.value.revision}). ${DETAILS_HINT}`, {
-				action: PLAN_MODE_COMPLETE_TOOL_NAME,
-				revision: result.value.revision,
-				status: result.value.status,
-				plan: normalized.plan,
-			});
+			const completed = planModeCompleted(normalized.plan);
+			return {
+				...completed,
+				details: {
+					...completed.details,
+					revision: result.value.revision,
+					status: result.value.status,
+				},
+			};
 		},
 		renderCall(args, theme) {
 			return new Text(
@@ -335,18 +320,22 @@ export function registerQiWorkflowTools(pi: ExtensionAPI): void {
 			questions: Type.Array(
 				Type.Object({
 					prompt: Type.String({ description: "Question prompt" }),
-					header: Type.Optional(Type.String()),
+					header: Type.String({
+						maxLength: 16,
+						description: "Short chip/tag (required, max 16 chars)",
+					}),
 					options: Type.Array(
 						Type.Object({
 							label: Type.String(),
-							description: Type.Optional(Type.String()),
+							description: Type.String({ description: "Required explanation of the option" }),
+							preview: Type.Optional(Type.String({ description: "Optional preview when focused" })),
 						}),
-						{ minItems: 2 },
+						{ minItems: 2, maxItems: 4 },
 					),
 					multiSelect: Type.Optional(Type.Boolean()),
 					allowFreeInput: Type.Optional(Type.Boolean()),
 				}),
-				{ minItems: 1 },
+				{ minItems: 1, maxItems: 4 },
 			),
 		}),
 		executionMode: "sequential",
@@ -358,42 +347,41 @@ export function registerQiWorkflowTools(pi: ExtensionAPI): void {
 			const validated = validateAskQuestions(params.questions);
 			if (!validated.ok) return failResult(validated.message);
 
-			const answers: Array<{ prompt: string; answerSummary?: string; cancelled?: boolean }> = [];
+			const answers: QuestionAnswer[] = [];
 
-			for (const q of params.questions) {
+			for (let i = 0; i < params.questions.length; i++) {
+				const q = params.questions[i]!;
 				const options: QuestionOption[] = q.options.map((o) => ({
 					label: o.label,
 					description: o.description,
+					preview: o.preview,
 				}));
 				const opened = workflowController.apply((state) =>
 					openQuestion(state, q.prompt, options, {
 						header: q.header,
 						multiSelect: q.multiSelect,
 						allowFreeInput: q.allowFreeInput,
+						questionIndex: i + 1,
+						questionCount: params.questions.length,
 					}),
 				);
-				if (!opened.ok) return failResult(opened.error, { answers });
+				if (!opened.ok) return failResult(opened.error);
 
 				const overlay = await showQuestionOverlay(ctx, workflowController);
 				if (overlay.action === "cancelled") {
-					answers.push({ prompt: q.prompt, cancelled: true });
-					return textResult(`Question cancelled: ${summarize(q.prompt, 60)}. ${DETAILS_HINT}`, {
-						action: "ask_user_question",
-						answers,
-						cancelled: true,
-					});
+					const envelope = buildAskEnvelope(validated.params, answers, true);
+					return { ...envelope, details: { ...envelope.details, action: "ask_user_question" } };
 				}
-				answers.push({ prompt: q.prompt, answerSummary: overlay.answerSummary });
+				const mapped = mapOverlayToAnswer(validated.params, i, {
+					selected: overlay.selected,
+					freeInput: overlay.freeInput,
+				});
+				if (overlay.notes) mapped.notes = overlay.notes;
+				answers.push(mapped);
 			}
 
-			const summary = answers
-				.map((a) => a.answerSummary)
-				.filter(Boolean)
-				.join(" | ");
-			return textResult(`Answered: ${summarize(summary, 160)}. ${DETAILS_HINT}`, {
-				action: "ask_user_question",
-				answers,
-			});
+			const envelope = buildAskEnvelope(validated.params, answers, false);
+			return { ...envelope, details: { ...envelope.details, action: "ask_user_question" } };
 		},
 		renderCall(args, theme) {
 			const n = args.questions?.length ?? 0;
@@ -408,7 +396,7 @@ export function registerQiWorkflowTools(pi: ExtensionAPI): void {
 		},
 		renderResult(result, _options, theme) {
 			const text = result.content[0]?.type === "text" ? result.content[0].text : "";
-			const err = text.startsWith("Error:");
+			const err = text.startsWith("Error:") || text.includes("declined");
 			return new Text(theme.fg(err ? "error" : "accent", summarize(text, 100)), 0, 0);
 		},
 	});
@@ -416,16 +404,18 @@ export function registerQiWorkflowTools(pi: ExtensionAPI): void {
 	pi.registerTool({
 		name: "process",
 		label: "Process",
-		description:
-			"Manage background jobs: start, status, logs, wait, cancel. Prefer short status; use dashboard for full logs.",
+		description: "Manage background jobs: start, list, status, logs, output, wait, cancel, clear, write (stdin).",
 		parameters: Type.Object({
-			action: StringEnum(["start", "status", "logs", "wait", "cancel"] as const),
+			action: StringEnum(["start", "list", "status", "logs", "output", "wait", "cancel", "clear", "write"] as const),
 			name: Type.Optional(Type.String({ description: "Job name (start)" })),
 			command: Type.Optional(Type.String({ description: "Shell command (start)" })),
 			cwd: Type.Optional(Type.String({ description: "Working directory (start)" })),
-			id: Type.Optional(Type.String({ description: "Job id (status/logs/wait/cancel)" })),
-			tail: Type.Optional(Type.Number({ description: "Log tail lines (logs)" })),
+			id: Type.Optional(Type.String({ description: "Job id" })),
+			tail: Type.Optional(Type.Number({ description: "Log/output tail lines" })),
 			timeoutMs: Type.Optional(Type.Number({ description: "Wait timeout ms (wait); 0 = no timeout" })),
+			input: Type.Optional(Type.String({ description: "Stdin data (write)" })),
+			end: Type.Optional(Type.Boolean({ description: "Close stdin after write (write)" })),
+			stream: Type.Optional(StringEnum(["stdout", "stderr", "both"] as const, { description: "output stream" })),
 		}),
 		async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
 			switch (params.action) {
@@ -484,6 +474,52 @@ export function registerQiWorkflowTools(pi: ExtensionAPI): void {
 							id: job.id,
 							status: job.status,
 						});
+					} catch (err) {
+						return failResult(err instanceof Error ? err.message : String(err));
+					}
+				}
+				case "list": {
+					const jobs = jobManager.list();
+					if (jobs.length === 0) return textResult("No jobs.", { action: "list", jobs: [] });
+					const lines = jobs.map(
+						(j) =>
+							`${shortId(j.id)} [${j.status}] ${j.name}${j.exitCode !== undefined ? ` exit=${j.exitCode}` : ""}`,
+					);
+					return textResult(lines.join("\n"), {
+						action: "list",
+						jobs: jobs.map((j) => ({ id: j.id, status: j.status, name: j.name })),
+					});
+				}
+				case "output": {
+					if (!params.id) return failResult("id required for output");
+					try {
+						const out = jobManager.output(params.id, {
+							tail: params.tail,
+							stream: params.stream ?? "both",
+						});
+						return textResult(out.text || "(no output)", {
+							action: "output",
+							id: params.id,
+							stdoutBytes: out.stdoutBytes,
+							stderrBytes: out.stderrBytes,
+						});
+					} catch (err) {
+						return failResult(err instanceof Error ? err.message : String(err));
+					}
+				}
+				case "clear": {
+					const n = jobManager.clearFinished();
+					return textResult(`Cleared ${n} finished job(s).`, { action: "clear", count: n });
+				}
+				case "write": {
+					if (!params.id) return failResult("id required for write");
+					if (params.input === undefined) return failResult("input required for write");
+					try {
+						jobManager.write(params.id, params.input, { end: params.end === true });
+						return textResult(
+							`Wrote ${params.input.length} bytes to job ${shortId(params.id)} stdin${params.end ? " (closed)" : ""}.`,
+							{ action: "write", id: params.id, bytes: params.input.length, end: params.end === true },
+						);
 					} catch (err) {
 						return failResult(err instanceof Error ? err.message : String(err));
 					}

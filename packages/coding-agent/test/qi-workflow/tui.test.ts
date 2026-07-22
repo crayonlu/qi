@@ -1,6 +1,7 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
+import { addTodoViaVendor } from "../../src/extensions/qi-workflow/adapters/index.ts";
+import { workflowController } from "../../src/extensions/qi-workflow/controller.ts";
 import {
-	addTodo,
 	createEmptyState,
 	createTask,
 	markPlanReady,
@@ -15,6 +16,7 @@ import {
 import { buildFooterText } from "../../src/extensions/qi-workflow/ui/footer.ts";
 import { statusThemeColor } from "../../src/extensions/qi-workflow/ui/status-color.ts";
 import { buildBoardLines, hasActiveWork } from "../../src/extensions/qi-workflow/ui/work-board.ts";
+import { __resetState } from "../../src/extensions/qi-workflow/vendor/todo/state/store.ts";
 import type { Theme } from "../../src/modes/interactive/theme/theme.ts";
 
 function fakeTheme(): Theme {
@@ -24,13 +26,20 @@ function fakeTheme(): Theme {
 }
 
 describe("qi-workflow TUI board/footer/overlays", () => {
+	afterEach(() => {
+		__resetState();
+		workflowController.resetSession("s");
+	});
+
 	it("hides board when idle and shows compact active work", () => {
 		const theme = fakeTheme();
 		expect(hasActiveWork(createEmptyState("s"))).toBe(false);
 		expect(buildBoardLines(createEmptyState("s"), theme, false)).toBeUndefined();
 
-		let s = setGoal(createEmptyState("s"), "G").state;
-		s = addTodo(s, "T1").state;
+		workflowController.resetSession("s");
+		workflowController.apply((s) => setGoal(s, "G"));
+		workflowController.apply((s) => addTodoViaVendor(s, "T1"));
+		let s = workflowController.getState();
 		s = createTask(s, "task").state;
 		s = setTaskRunning(s, s.tasks[0]!.id).state;
 		s = startJob(s, "job", "echo", "/tmp").state;

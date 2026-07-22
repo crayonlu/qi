@@ -1,7 +1,7 @@
 import { isContradictoryCompletionSummary } from "../../vendor/goal/contradiction.ts";
 import { newId, nowMs } from "../ids.ts";
 import type { TransitionResult } from "../result.ts";
-import type { Goal, GoalStatus, QiWorkflowState, TodoItem, TodoStatus } from "../types.ts";
+import type { Goal, GoalStatus, QiWorkflowState, TodoItem } from "../types.ts";
 
 function bump(entity: { revision: number; updatedAt: number }): void {
 	entity.revision += 1;
@@ -36,6 +36,9 @@ export function setGoal(state: QiWorkflowState, objective: string): TransitionRe
 		updatedAt: t,
 		revision: 1,
 		iteration: 0,
+		tokensUsed: 0,
+		timeUsedSeconds: 0,
+		baselineTokens: 0,
 	};
 
 	const next: QiWorkflowState = {
@@ -157,88 +160,7 @@ export function clearContinuationTicket(state: QiWorkflowState, ticket: string):
 	return ok({ ...state, goal }, goal);
 }
 
-export function addTodo(state: QiWorkflowState, text: string): TransitionResult<TodoItem> {
-	const trimmed = text.trim();
-	if (!trimmed) return fail(state, "Todo text is required");
-	const t = nowMs();
-	const todo: TodoItem = {
-		id: newId("todo"),
-		text: trimmed,
-		summary: trimmed,
-		status: "pending",
-		position: state.todos.length,
-		goalId: state.goal?.id,
-		taskIds: [],
-		createdAt: t,
-		updatedAt: t,
-		revision: 1,
-	};
-	let next = { ...state, todos: [...state.todos, todo] };
-	if (state.goal) {
-		const goal = { ...state.goal, todoIds: [...state.goal.todoIds, todo.id] };
-		bump(goal);
-		next = { ...next, goal };
-	}
-	return ok(next, todo);
-}
-
-export function startTodo(state: QiWorkflowState, id: string): TransitionResult<TodoItem> {
-	const todo = state.todos.find((item) => item.id === id || item.id.endsWith(id));
-	if (!todo) return fail(state, `Todo not found: ${id}`);
-	if (todo.status === "completed" || todo.status === "cancelled") {
-		return fail(state, `Cannot start todo in status ${todo.status}`);
-	}
-	const updated = { ...todo, status: "in_progress" as TodoStatus };
-	bump(updated);
-	return ok({ ...state, todos: state.todos.map((item) => (item.id === todo.id ? updated : item)) }, updated);
-}
-
-export function blockTodo(state: QiWorkflowState, id: string, reason: string): TransitionResult<TodoItem> {
-	const todo = state.todos.find((item) => item.id === id || item.id.endsWith(id));
-	if (!todo) return fail(state, `Todo not found: ${id}`);
-	const trimmed = reason.trim();
-	if (!trimmed) return fail(state, "Block reason is required");
-	const updated = { ...todo, status: "blocked" as TodoStatus, blockReason: trimmed, summary: `Blocked: ${trimmed}` };
-	bump(updated);
-	return ok({ ...state, todos: state.todos.map((item) => (item.id === todo.id ? updated : item)) }, updated);
-}
-
-export function completeTodo(state: QiWorkflowState, id: string, verification?: string): TransitionResult<TodoItem> {
-	const todo = state.todos.find((item) => item.id === id || item.id.endsWith(id));
-	if (!todo) return fail(state, `Todo not found: ${id}`);
-	const updated = {
-		...todo,
-		status: "completed" as TodoStatus,
-		verification: verification?.trim() || undefined,
-		summary: `Done: ${todo.text}`,
-	};
-	bump(updated);
-	return ok({ ...state, todos: state.todos.map((item) => (item.id === todo.id ? updated : item)) }, updated);
-}
-
-export function cancelTodo(state: QiWorkflowState, id: string): TransitionResult<TodoItem> {
-	const todo = state.todos.find((item) => item.id === id || item.id.endsWith(id));
-	if (!todo) return fail(state, `Todo not found: ${id}`);
-	const updated = { ...todo, status: "cancelled" as TodoStatus, summary: `Cancelled: ${todo.text}` };
-	bump(updated);
-	return ok({ ...state, todos: state.todos.map((item) => (item.id === todo.id ? updated : item)) }, updated);
-}
-
-export function removeTodo(state: QiWorkflowState, id: string): TransitionResult<null> {
-	const todo = state.todos.find((item) => item.id === id || item.id.endsWith(id));
-	if (!todo) return fail(state, `Todo not found: ${id}`);
-	let next: QiWorkflowState = {
-		...state,
-		todos: reindexTodos(state.todos.filter((item) => item.id !== todo.id)),
-	};
-	if (state.goal) {
-		const goal = { ...state.goal, todoIds: state.goal.todoIds.filter((todoId) => todoId !== todo.id) };
-		bump(goal);
-		next = { ...next, goal };
-	}
-	return ok(next, null);
-}
-
+/** Dashboard-only reorder of Qi projection positions. Vendor store has no position field. */
 export function moveTodo(state: QiWorkflowState, id: string, position: number): TransitionResult<TodoItem> {
 	const todos = state.todos.slice().sort((a, b) => a.position - b.position);
 	const index = todos.findIndex((item) => item.id === id || item.id.endsWith(id));

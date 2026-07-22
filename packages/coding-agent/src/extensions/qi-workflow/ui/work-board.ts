@@ -1,3 +1,8 @@
+/**
+ * Build board lines for active Qi work (goal / plan / todos / tasks / jobs).
+ * Collapsed mode uses /board expand — never a dead [/qi expand] hint.
+ */
+
 import type { Component, TUI } from "@earendil-works/pi-tui";
 import { truncateToWidth } from "@earendil-works/pi-tui";
 import type { ExtensionUIContext } from "../../../core/extensions/types.ts";
@@ -25,29 +30,51 @@ function isActiveGoal(state: QiWorkflowState): boolean {
 	return !!g && (g.status === "active" || g.status === "paused" || g.status === "blocked");
 }
 
+function isVisiblePlan(state: QiWorkflowState): boolean {
+	const p = state.plan;
+	return !!p && (p.status === "draft" || p.status === "ready" || p.status === "executing");
+}
+
 /** Whether the board should be visible at all. */
 export function hasActiveWork(state: QiWorkflowState): boolean {
 	if (isActiveGoal(state)) return true;
 	if (state.todos.some(isUnfinishedTodo)) return true;
 	if (state.tasks.some(isActiveTask)) return true;
 	if (state.jobs.some(isActiveJob)) return true;
-	if (state.plan?.status === "ready") return true;
+	if (isVisiblePlan(state)) return true;
 	return false;
+}
+
+function formatTodoChip(t: TodoItem): string {
+	const mark = t.status === "in_progress" ? "*" : t.status === "blocked" ? "!" : "·";
+	const label = t.status === "in_progress" && t.activeForm ? t.activeForm : t.text;
+	const deps = t.blockedBy && t.blockedBy.length > 0 ? `↩${t.blockedBy.join(",")}` : "";
+	return `${mark}${label}${deps}`;
 }
 
 function compactTodos(todos: TodoItem[]): string {
 	const unfinished = todos.filter(isUnfinishedTodo).sort((a, b) => a.position - b.position);
 	if (unfinished.length === 0) return "";
-	const shown = unfinished.slice(0, 3).map((t) => {
-		const mark = t.status === "in_progress" ? "*" : t.status === "blocked" ? "!" : "·";
-		return `${mark}${t.text}`;
-	});
+	const shown = unfinished.slice(0, 3).map(formatTodoChip);
 	const extra = unfinished.length > 3 ? ` +${unfinished.length - 3}` : "";
 	return `${shown.join(" · ")}${extra}`;
 }
 
+function goalUsageBits(state: QiWorkflowState, theme: Theme): string {
+	const g = state.goal;
+	if (!g || !isActiveGoal(state)) return "";
+	const bits: string[] = [];
+	if (g.tokenBudget && g.tokenBudget > 0) {
+		bits.push(`${g.tokensUsed}/${g.tokenBudget} tok`);
+	} else if (g.tokensUsed > 0) {
+		bits.push(`${g.tokensUsed} tok`);
+	}
+	if (g.vendorStatus && g.vendorStatus !== g.status) bits.push(g.vendorStatus);
+	return bits.length ? theme.fg("dim", ` (${bits.join(" · ")})`) : "";
+}
+
 /**
- * Build board lines (max 4: goal, todos, task, job) plus optional plan-ready line.
+ * Build board lines (goal, plan, todos, task, job).
  * Returns undefined when there is no active work (caller should hide the widget).
  */
 export function buildBoardLines(state: QiWorkflowState, theme: Theme, collapsed: boolean): string[] | undefined {
@@ -56,19 +83,20 @@ export function buildBoardLines(state: QiWorkflowState, theme: Theme, collapsed:
 	const unfinished = state.todos.filter(isUnfinishedTodo);
 	const activeTasks = state.tasks.filter(isActiveTask);
 	const activeJobs = state.jobs.filter(isActiveJob);
-	const planReady = state.plan?.status === "ready";
+	const plan = state.plan;
+	const planVisible = isVisiblePlan(state);
 
 	if (collapsed) {
 		const bits: string[] = [];
 		if (state.goal && isActiveGoal(state)) {
 			bits.push(colorStatus(theme, state.goal.status, `goal:${state.goal.status}`));
 		}
+		if (planVisible && plan) bits.push(theme.fg("muted", `plan:${plan.status}`));
 		if (unfinished.length > 0) bits.push(theme.fg("muted", `todos=${unfinished.length}`));
 		if (activeTasks.length > 0) bits.push(theme.fg("accent", `tasks=${activeTasks.length}`));
 		if (activeJobs.length > 0) bits.push(theme.fg("accent", `jobs=${activeJobs.length}`));
-		if (planReady) bits.push(theme.fg("success", "plan ready"));
 		const summary = bits.length > 0 ? bits.join(" ") : theme.fg("dim", "qi");
-		return [theme.fg("dim", "▸ ") + summary + theme.fg("dim", "  [/qi expand]")];
+		return [theme.fg("dim", "▸ ") + summary + theme.fg("dim", "  [/board expand]")];
 	}
 
 	const lines: string[] = [];
@@ -76,7 +104,18 @@ export function buildBoardLines(state: QiWorkflowState, theme: Theme, collapsed:
 	if (state.goal && isActiveGoal(state)) {
 		const label = colorStatus(theme, state.goal.status, "goal");
 		const obj = theme.fg("text", state.goal.objective);
-		lines.push(`${label} ${obj}`);
+		lines.push(`${label} ${obj}${goalUsageBits(state, theme)}`);
+		if (state.goal.blockReason) {
+			lines.push(theme.fg("error", `  ! ${state.goal.blockReason}`));
+		}
+	}
+
+	if (planVisible && plan) {
+		const planColor = plan.status === "ready" ? "success" : plan.status === "executing" ? "accent" : "muted";
+		lines.push(
+			`${theme.fg(planColor, `plan:${plan.status}`)} ${theme.fg("text", plan.goal)}` +
+				theme.fg("dim", "  [/plan execute · /plan ready]"),
+		);
 	}
 
 	if (unfinished.length > 0) {
@@ -96,14 +135,7 @@ export function buildBoardLines(state: QiWorkflowState, theme: Theme, collapsed:
 		lines.push(`${colorStatus(theme, job.status, "job")} ${theme.fg("text", job.name)}${more}`);
 	}
 
-	// Cap to 4 primary lines (goal/todos/task/job), keep newest/most relevant first.
-	const primary = lines.slice(0, 4);
-
-	if (planReady) {
-		primary.push(theme.fg("success", "plan ready") + theme.fg("dim", ` · ${state.plan!.goal}`));
-	}
-
-	return primary.length > 0 ? primary : undefined;
+	return lines.length > 0 ? lines.slice(0, 6) : undefined;
 }
 
 class QiWorkBoard implements Component {
@@ -125,7 +157,7 @@ class QiWorkBoard implements Component {
 	}
 
 	handleInput(_data: string): void {
-		// Widget is non-capturing; expand/collapse via commands.
+		// Non-capturing widget; expand/collapse via /board.
 	}
 
 	render(width: number): string[] {

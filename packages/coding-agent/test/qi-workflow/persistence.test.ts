@@ -1,9 +1,9 @@
 import { describe, expect, it } from "vitest";
 import type { ExtensionAPI } from "../../src/core/extensions/types.ts";
 import { SessionManager } from "../../src/core/session-manager.ts";
+import { addTodoViaVendor } from "../../src/extensions/qi-workflow/adapters/index.ts";
 import { WorkflowController } from "../../src/extensions/qi-workflow/controller.ts";
 import {
-	addTodo,
 	createEmptyState,
 	markPlanReady,
 	QI_STATE_CUSTOM_TYPE,
@@ -16,9 +16,11 @@ import {
 	persistState,
 	sanitizeRestoredState,
 } from "../../src/extensions/qi-workflow/persistence/session-store.ts";
+import { __resetState } from "../../src/extensions/qi-workflow/vendor/todo/state/store.ts";
 
 describe("qi-workflow session persistence", () => {
 	it("persists and restores goal/todo/plan for the same session id", () => {
+		__resetState();
 		const sm = SessionManager.inMemory(process.cwd());
 		const sessionId = sm.getSessionId();
 		const controller = new WorkflowController();
@@ -30,7 +32,7 @@ describe("qi-workflow session persistence", () => {
 		controller.resetSession(sessionId);
 
 		expect(controller.apply((s) => setGoal(s, "Persist me")).ok).toBe(true);
-		expect(controller.apply((s) => addTodo(s, "Todo 1")).ok).toBe(true);
+		expect(controller.apply((s) => addTodoViaVendor(s, "Todo 1")).ok).toBe(true);
 		expect(controller.apply((s) => startPlan(s, "Plan goal")).ok).toBe(true);
 		expect(controller.apply((s) => updatePlanSections(s, { steps: ["step"] })).ok).toBe(true);
 		expect(controller.apply((s) => markPlanReady(s)).ok).toBe(true);
