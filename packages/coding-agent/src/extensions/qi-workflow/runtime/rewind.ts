@@ -9,8 +9,9 @@ import { addRewindCheckpoint, type RestoreScope, type RewindCheckpoint } from ".
 import {
 	type CheckpointData,
 	createCheckpoint,
-	git,
+	loadCheckpointFromRef,
 	MUTATING_TOOLS,
+	REF_BASE,
 	restoreCheckpoint,
 	sanitizeForRef,
 } from "../vendor/rewind/core.ts";
@@ -23,7 +24,7 @@ export interface RewindRestoreOptions {
 	scope: RestoreScope;
 	/** Session entry id to navigate to (conversation / all). */
 	entryId?: string;
-	/** Optional git ref / tree for file restore (best-effort). */
+	/** Vendor checkpoint ref (`refs/pi-checkpoints/<id>`) or bare id. */
 	gitRef?: string;
 	label?: string;
 	cwd?: string;
@@ -38,8 +39,15 @@ function nextCheckpointId(label: string): string {
 	return sanitizeForRef(`${label}-${stamp}`).slice(0, 80);
 }
 
+/** Normalize stored gitRef to the bare vendor checkpoint id used by loadCheckpointFromRef. */
+export function checkpointIdFromGitRef(gitRef: string): string {
+	const prefix = `${REF_BASE}/`;
+	return gitRef.startsWith(prefix) ? gitRef.slice(prefix.length) : gitRef;
+}
+
 /**
  * Create a filesystem checkpoint and record it in domain state (gitRef + entryId).
+ * gitRef matches vendor `update-ref ${REF_BASE}/${id}` exactly.
  */
 export async function checkpointFiles(opts: {
 	cwd: string;
@@ -60,7 +68,7 @@ export async function checkpointFiles(opts: {
 		description: opts.description,
 	});
 
-	const gitRef = `refs/pi-checkpoints/${opts.sessionId}/${data.id}`;
+	const gitRef = `${REF_BASE}/${data.id}`;
 	const result = workflowController.apply((state) =>
 		addRewindCheckpoint(state, opts.description ?? data.id, {
 			entryId: opts.entryId,
@@ -70,6 +78,16 @@ export async function checkpointFiles(opts: {
 	);
 	if (!result.ok) throw new Error(result.error);
 	return result.value;
+}
+
+async function resolveCheckpointForRestore(
+	cwd: string,
+	options: RewindRestoreOptions,
+): Promise<CheckpointData | undefined> {
+	if (options.checkpoint) return options.checkpoint;
+	if (!options.gitRef) return undefined;
+	const id = checkpointIdFromGitRef(options.gitRef);
+	return (await loadCheckpointFromRef(cwd, id)) ?? undefined;
 }
 
 /**
@@ -106,16 +124,13 @@ export async function restoreRewind(
 	if (!checkpoint.ok) throw new Error(checkpoint.error);
 
 	if (options.scope === "files" || options.scope === "all") {
-		if (options.checkpoint) {
+		const data = await resolveCheckpointForRestore(cwd, options);
+		if (!data) {
+			ctx.ui.notify("No checkpoint data available for file restore", "warning");
+			if (options.scope === "files") return checkpoint.value;
+		} else {
 			try {
-				await restoreCheckpoint(cwd, options.checkpoint);
-			} catch {
-				ctx.ui.notify("File restore failed (best-effort); conversation restore may continue", "warning");
-				if (options.scope === "files") return checkpoint.value;
-			}
-		} else if (gitRef) {
-			// Fallback: restore worktree from the stored checkpoint ref tip.
-			try {
+				// Safety snapshot before mutating the worktree.
 				await createCheckpoint({
 					root: cwd,
 					id: nextCheckpointId("before-restore"),
@@ -124,14 +139,11 @@ export async function restoreRewind(
 					turnIndex: turnIndex++,
 					description: "auto before restore",
 				});
-				await git(`checkout ${gitRef} -- .`, cwd);
+				await restoreCheckpoint(cwd, data);
 			} catch {
 				ctx.ui.notify("File restore failed (best-effort); conversation restore may continue", "warning");
 				if (options.scope === "files") return checkpoint.value;
 			}
-		} else if (options.scope === "files") {
-			ctx.ui.notify("No gitRef/checkpoint provided for file restore", "warning");
-			return checkpoint.value;
 		}
 	}
 

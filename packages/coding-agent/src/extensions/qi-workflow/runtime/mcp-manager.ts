@@ -81,13 +81,43 @@ export class McpManager {
 				definition: entry,
 			});
 			this.lifecycle.registerServer(name, entry, { idleTimeout: entry.idleTimeout });
+			const existing = workflowController.getState().mcpServers.find((s) => s.name === name);
+			const enabled = existing?.enabled !== false;
 			if (entry.lifecycle === "keep-alive") {
 				this.lifecycle.markKeepAlive(name, entry);
+				if (enabled && !this.manager.getConnection(name)) {
+					void this.manager
+						.connect(name, entry)
+						.then((connection) => {
+							workflowController.apply((s) =>
+								upsertMcpServer(s, {
+									name,
+									status: "connected",
+									transport,
+									sourcePath,
+									toolCount: connection.tools.length,
+									enabled: true,
+									error: undefined,
+								}),
+							);
+						})
+						.catch((err) => {
+							const message = err instanceof Error ? err.message : String(err);
+							workflowController.apply((s) =>
+								upsertMcpServer(s, {
+									name,
+									status: "error",
+									transport,
+									sourcePath,
+									error: message,
+									enabled: true,
+								}),
+							);
+						});
+				}
 			}
 
 			const connection = this.manager.getConnection(name);
-			const existing = workflowController.getState().mcpServers.find((s) => s.name === name);
-			const enabled = existing?.enabled !== false;
 			const result = workflowController.apply((s) =>
 				upsertMcpServer(s, {
 					name,

@@ -46,6 +46,9 @@ export class McpLifecycleManager {
 	}
 
 	startHealthChecks(intervalMs = 30000): void {
+		if (this.healthCheckInterval) {
+			clearInterval(this.healthCheckInterval);
+		}
 		this.healthCheckInterval = setInterval(() => {
 			this.checkConnections();
 		}, intervalMs);
