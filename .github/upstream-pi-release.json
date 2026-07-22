@@ -1,0 +1,6 @@
+{
+  "repository": "earendil-works/pi-mono",
+  "lastProcessedTag": "v0.81.1",
+  "lastProcessedAt": "2026-07-21T16:45:17Z",
+  "note": "Qi starts tracking upstream Pi releases from v0.81.1. The sync workflow updates this marker only through a reviewable PR."
+}

@@ -1,0 +1,54 @@
+name: Sync upstream Pi release
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Optional upstream Pi tag to sync, for example v0.81.2"
+        required: false
+        type: string
+  repository_dispatch:
+    types:
+      - upstream-pi-release
+  schedule:
+    - cron: "17 3 * * *"
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+
+concurrency:
+  group: upstream-pi-release-sync
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Qi
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+
+      - name: Configure git author
+        run: |
+          git config user.name "qi-upstream-sync[bot]"
+          git config user.email "qi-upstream-sync[bot]@users.noreply.github.com"
+
+      - name: Sync latest upstream release
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ github.token }}
+          UPSTREAM_REPO: earendil-works/pi-mono
+          UPSTREAM_REMOTE_NAME: upstream-pi
+          UPSTREAM_REMOTE_URL: https://github.com/earendil-works/pi-mono.git
+          UPSTREAM_SYNC_BASE_BRANCH: main
+          UPSTREAM_SYNC_MARKER: .github/upstream-pi-release.json
+          UPSTREAM_RELEASE_TAG: ${{ inputs.tag || github.event.client_payload.tag || '' }}
+        run: node scripts/sync-upstream-release.mjs
