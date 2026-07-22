@@ -2,43 +2,38 @@
 
 Qi ships selected MIT-licensed reference implementations inside the first-party
 `qi-workflow` extension. They are not npm runtime dependencies of those packages.
+Only **reachable** implementation modules are retained under `vendor/` (not a source archive).
 
 ## License summary
 
 All adopted sources below are MIT. Full license texts are copied beside the
 adopted code under `vendor/LICENSE.*.md`.
 
-## Provenance
+## Provenance (retained modules)
 
-| Capability | Upstream package | Local research path | Version / commit | Adopted areas | Copyright |
-|---|---|---|---|---|---|
-| Goal | `@narumitw/pi-goal` | `packages/research/pi-extensions/extensions/pi-goal` | research tree | runtime, queue, persistence, prompts, accounting, commands | Copyright (c) 2026 narumiruna |
-| Plan | `@narumitw/pi-plan-mode` | `.../pi-plan-mode` | research tree | completion/question/prompt/state/message-transform/settings | Copyright (c) 2026 narumiruna |
-| Subagents | `@narumitw/pi-subagents` | `.../pi-subagents` | research tree | runner, execution, transports, stateful spawn, config UI | Copyright (c) 2026 narumiruna |
-| Todo | `rpiv-todo` | `packages/research/rpiv-mono/packages/rpiv-todo` | research tree | state reducer/store/replay/task-graph, tool envelope, overlay | Copyright (c) 2026 juicesharp |
-| Structured question | `rpiv-ask-user-question` | `.../rpiv-ask-user-question` | research tree | questionnaire reduce/session, validate, dialog views | Copyright (c) 2026 juicesharp |
-| /btw | `rpiv-btw` / `@narumitw/pi-btw` | `.../rpiv-btw`, `.../pi-btw` | research tree | side-turn + overlay UI sources | Copyright (c) 2026 juicesharp / narumiruna |
-| Jobs | `pi-processes` | `packages/research/pi-processes` | research tree | ProcessManager, tools/actions, hooks, utils | MIT (see LICENSE.pi-processes.md) |
-| MCP | `pi-mcp-adapter` | `packages/research/pi-mcp-adapter` | 2.11.0 research tree | server-manager, lifecycle, OAuth, elicitation/sampling, direct-tools, proxy-modes, panels, ui-session/server, consent, metadata-cache | Copyright (c) 2026 Nico Bailon |
-| Rewind | `pi-rewind` | `packages/research/pi-rewind` | 0.5.0 research tree | checkpoint core + restore scopes + UI | Copyright (c) 2026 arpagon |
-| Cleanup | `pi-cleanup` | `packages/research/pi-cleanup` | research tree | scan categories + apply gate | Copyright (c) 2026 crayonlu |
-| Shared config | `@juicesharp/rpiv-config` | `.../rpiv-config` | research tree | JSON config load helpers used by todo/ask | Copyright (c) 2026 juicesharp |
+| Capability | Upstream | Retained vendor areas | Copyright |
+|---|---|---|---|
+| MCP | `pi-mcp-adapter` | server-manager, lifecycle, config, OAuth, elicitation/sampling handlers, utils | Copyright (c) 2026 Nico Bailon |
+| Rewind | `pi-rewind` | `core.ts` checkpoint create/load/restore | Copyright (c) 2026 arpagon |
+| Cleanup | `pi-cleanup` | scan helpers in `cleanup.ts` | Copyright (c) 2026 crayonlu |
+| Processes | `pi-processes` | ProcessManager + utils/constants | MIT (LICENSE.pi-processes.md) |
+| Goal | `pi-goal` | runtime, persistence, prompts, accounting, settings | Copyright (c) 2026 narumiruna |
+| Plan | `pi-plan-mode` | completion-tool, state restore, thinking-level settings | Copyright (c) 2026 narumiruna |
+| Subagents | `pi-subagents` | execution/runner/transports/stateful tool registration | Copyright (c) 2026 narumiruna |
+| Todo | `rpiv-todo` | state reducer/store/task-graph + tool envelope | Copyright (c) 2026 juicesharp |
+| Ask | `rpiv-ask-user-question` | validate-questionnaire + row-intent/types | Copyright (c) 2026 juicesharp |
+| /btw | `pi-btw` / `rpiv-btw` | implementation not retained as files; Qi branch-clone runtime | juicesharp / narumiruna (LICENSE retained) |
 
-## Intentionally excluded
+## Intentionally excluded / pruned
 
-- Upstream package **test suites** (Qi adds focused integration tests only)
-- `pi-plan-mode` bash command classification and `setActiveTools` lockdown
-- Generic permission / approval / sandbox / vault frameworks
-- User-local `~/.pi/agent` prompts, skills, MCP configs, model preferences, agent templates as bundled defaults
-- nicobailon `pi-subagents` fleet/watchdog/intercom second runtime
-- Optional npm peers not shipped: `@juicesharp/rpiv-i18n`, `@mcp-ui/ext-apps`, `recheck` (stubs: English fallback / no-op UI app-bridge)
-- Standalone package `index.ts` CLI/bin entrypoints — Qi registers one built-in extension and thin adapters instead
+- Upstream tests, README/CHANGELOG/docs, demos
+- Package UI/panels/overlays replaced by Qi dashboard/footer/overlays
+- Standalone extension command registration (Qi owns slash surface)
+- Plan-mode tool-policy / bash lockdown
+- MCP package panels, ui-server/ui-session, app-bridge, proxy-modes/direct-tools (not wired through Qi MCP manager)
+- Subagent package config UI (Qi owns configuration UX)
+- Optional peers: `@juicesharp/rpiv-i18n`, `@mcp-ui/ext-apps`, `recheck`
 
 ## Runtime dependency rationale
 
-`@modelcontextprotocol/sdk` **1.25.1** is added to `@earendil-works/pi-coding-agent`
-because the adopted MCP server manager uses the SDK client transports
-(stdio, Streamable HTTP, SSE) and OAuth helpers.
-
-`open` **10.2.0** is added for MCP OAuth browser launch during interactive auth
-flows. No third-party Pi extension package is installed as a runtime dependency.
+`@modelcontextprotocol/sdk` **1.25.1** and `open` **10.2.0** support the retained MCP client transports and OAuth browser launch. No third-party Pi extension package is installed as a runtime dependency.

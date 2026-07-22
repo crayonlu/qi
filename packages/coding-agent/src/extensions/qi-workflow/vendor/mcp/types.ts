@@ -402,7 +402,8 @@ export interface McpPanelCallbacks {
   canAuthenticate: (serverName: string) => boolean;
   authenticate: (serverName: string) => Promise<McpAuthResult>;
   getConnectionStatus: (serverName: string) => "connected" | "idle" | "failed" | "needs-auth";
-  refreshCacheAfterReconnect: (serverName: string) => import("./metadata-cache.ts").ServerCacheEntry | null;
+  /** Cache refresh hook; Qi panel does not use package metadata-cache. */
+  refreshCacheAfterReconnect: (serverName: string) => unknown;
 }
 
 export interface McpPanelResult {

@@ -1,13 +1,15 @@
 /**
  * /btw adapter — Qi runtime uses branch-clone completeSimple (rpiv-btw pattern).
- * vendor/btw and vendor/btw-rpiv hold the adopted side-turn/UI sources.
+ * Vendor package UI/settings file is not retained; Qi owns /btw UX.
  */
 
 import { runBtwSideTurn } from "../runtime/btw-side-turn.ts";
-import { BTW_SETTINGS_FILE } from "../vendor/btw/btw.ts";
+
+/** Upstream pi-btw settings filename (provenance only; Qi does not load this file). */
+export const BTW_SETTINGS_FILE = "pi-btw.json";
 
 export function peekBtwVendorReachable(): boolean {
-	return typeof BTW_SETTINGS_FILE === "string" && typeof runBtwSideTurn === "function";
+	return typeof runBtwSideTurn === "function";
 }
 
-export { runBtwSideTurn, BTW_SETTINGS_FILE };
+export { runBtwSideTurn };
