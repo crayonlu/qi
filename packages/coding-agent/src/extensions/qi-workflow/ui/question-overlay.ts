@@ -1,0 +1,254 @@
+import type { Component, TUI } from "@earendil-works/pi-tui";
+import { matchesKey, truncateToWidth, wrapTextWithAnsi } from "@earendil-works/pi-tui";
+import type { ExtensionUIContext } from "../../../core/extensions/types.ts";
+import type { Theme } from "../../../modes/interactive/theme/theme.ts";
+import type { WorkflowController } from "../controller.ts";
+import { answerQuestion, cancelQuestion, type StructuredQuestion } from "../domain/index.ts";
+
+export type QuestionOverlayResult =
+	| { action: "answered"; selected: string[]; freeInput?: string; answerSummary: string }
+	| { action: "cancelled" };
+
+const OVERLAY_OPTIONS = {
+	anchor: "bottom-center" as const,
+	width: "100%" as const,
+	maxHeight: "80%" as const,
+	margin: { left: 0, right: 0, bottom: 0 },
+};
+
+class QuestionOverlay implements Component {
+	private tui: TUI;
+	private theme: Theme;
+	private question: StructuredQuestion;
+	private allowFreeInput: boolean;
+	private done: (result: QuestionOverlayResult) => void;
+	private controller: WorkflowController;
+	private optionIndex = 0;
+	private selected = new Set<number>();
+	private freeMode = false;
+	private freeText = "";
+	private collapsed = false;
+	private cachedWidth?: number;
+	private cachedLines?: string[];
+
+	constructor(
+		tui: TUI,
+		theme: Theme,
+		question: StructuredQuestion,
+		controller: WorkflowController,
+		done: (result: QuestionOverlayResult) => void,
+	) {
+		this.tui = tui;
+		this.theme = theme;
+		this.question = question;
+		this.allowFreeInput = question.allowFreeInput !== false;
+		this.controller = controller;
+		this.done = done;
+	}
+
+	private refresh(): void {
+		this.invalidate();
+		this.tui.requestRender();
+	}
+
+	private submit(selected: string[], freeInput?: string): void {
+		const result = this.controller.apply((state) => answerQuestion(state, selected, freeInput));
+		if (!result.ok) {
+			this.done({ action: "cancelled" });
+			return;
+		}
+		this.done({
+			action: "answered",
+			selected,
+			freeInput: freeInput?.trim() || undefined,
+			answerSummary: result.value.answerSummary ?? selected.join("; "),
+		});
+	}
+
+	private cancel(): void {
+		this.controller.apply((state) => cancelQuestion(state));
+		this.done({ action: "cancelled" });
+	}
+
+	handleInput(data: string): void {
+		if (matchesKey(data, "ctrl+c")) {
+			this.cancel();
+			return;
+		}
+
+		if (this.collapsed) {
+			if (matchesKey(data, "escape") || data === "c" || data === "C") {
+				this.collapsed = false;
+				this.refresh();
+			}
+			return;
+		}
+
+		if (this.freeMode) {
+			if (matchesKey(data, "escape")) {
+				this.freeMode = false;
+				this.freeText = "";
+				this.refresh();
+				return;
+			}
+			if (matchesKey(data, "enter") || matchesKey(data, "return")) {
+				const trimmed = this.freeText.trim();
+				if (!trimmed) return;
+				this.submit([], trimmed);
+				return;
+			}
+			if (matchesKey(data, "backspace")) {
+				this.freeText = this.freeText.slice(0, -1);
+				this.refresh();
+				return;
+			}
+			if (data.length === 1 && data.charCodeAt(0) >= 32) {
+				this.freeText += data;
+				this.refresh();
+			}
+			return;
+		}
+
+		if (matchesKey(data, "escape")) {
+			this.cancel();
+			return;
+		}
+		if (data === "c" || data === "C") {
+			this.collapsed = true;
+			this.refresh();
+			return;
+		}
+		if (matchesKey(data, "up")) {
+			this.optionIndex = Math.max(0, this.optionIndex - 1);
+			this.refresh();
+			return;
+		}
+		if (matchesKey(data, "down")) {
+			const last = this.allowFreeInput ? this.question.options.length : this.question.options.length - 1;
+			this.optionIndex = Math.min(last, this.optionIndex + 1);
+			this.refresh();
+			return;
+		}
+		if (matchesKey(data, "space") && this.question.multiSelect) {
+			if (this.optionIndex < this.question.options.length) {
+				if (this.selected.has(this.optionIndex)) this.selected.delete(this.optionIndex);
+				else this.selected.add(this.optionIndex);
+				this.refresh();
+			}
+			return;
+		}
+		if (matchesKey(data, "enter") || matchesKey(data, "return")) {
+			if (this.allowFreeInput && this.optionIndex === this.question.options.length) {
+				this.freeMode = true;
+				this.refresh();
+				return;
+			}
+			if (this.question.multiSelect) {
+				const labels = [...this.selected]
+					.sort((a, b) => a - b)
+					.map((i) => this.question.options[i]?.label)
+					.filter((x): x is string => !!x);
+				if (labels.length === 0 && this.optionIndex < this.question.options.length) {
+					const label = this.question.options[this.optionIndex]?.label;
+					if (label) labels.push(label);
+				}
+				if (labels.length === 0) return;
+				this.submit(labels);
+				return;
+			}
+			const opt = this.question.options[this.optionIndex];
+			if (!opt) return;
+			this.submit([opt.label]);
+		}
+	}
+
+	render(width: number): string[] {
+		if (this.cachedLines && this.cachedWidth === width) return this.cachedLines;
+
+		const th = this.theme;
+		const w = Math.max(1, width);
+
+		if (this.collapsed) {
+			const header = this.question.header ?? "Question";
+			const line =
+				th.fg("accent", "▸ Q ") +
+				th.fg("text", truncateToWidth(header, Math.max(1, w - 12))) +
+				th.fg("dim", "  [c expand · Esc cancel]");
+			this.cachedWidth = width;
+			this.cachedLines = [truncateToWidth(line, w)];
+			return this.cachedLines;
+		}
+
+		const lines: string[] = [];
+		lines.push(th.fg("accent", "─".repeat(w)));
+		if (this.question.header) {
+			lines.push(...wrapTextWithAnsi(th.fg("accent", this.question.header), w));
+		}
+		lines.push(...wrapTextWithAnsi(th.fg("text", this.question.prompt), w));
+		lines.push("");
+
+		for (let i = 0; i < this.question.options.length; i++) {
+			const opt = this.question.options[i]!;
+			const focused = i === this.optionIndex && !this.freeMode;
+			const checked = this.selected.has(i);
+			const marker = this.question.multiSelect ? (checked ? "[x]" : "[ ]") : `${i + 1}.`;
+			const prefix = focused ? th.fg("accent", "> ") : "  ";
+			const label = th.fg(focused ? "accent" : "text", `${marker} ${opt.label}`);
+			lines.push(truncateToWidth(prefix + label, w));
+			if (opt.description) {
+				lines.push(truncateToWidth(`     ${th.fg("muted", opt.description)}`, w));
+			}
+		}
+
+		if (this.allowFreeInput) {
+			const freeIdx = this.question.options.length;
+			const focused = this.optionIndex === freeIdx || this.freeMode;
+			const prefix = focused ? th.fg("accent", "> ") : "  ";
+			const label = th.fg(focused ? "accent" : "text", `${freeIdx + 1}. Type something…`);
+			lines.push(truncateToWidth(prefix + label, w));
+			if (this.freeMode) {
+				const cursor = th.fg("accent", "▌");
+				const shown = this.freeText.length === 0 ? th.fg("dim", "…") : th.fg("text", this.freeText);
+				lines.push(truncateToWidth(`  ${th.fg("muted", "answer:")} ${shown}${cursor}`, w));
+			}
+		}
+
+		lines.push("");
+		const hint = this.freeMode
+			? "Enter submit · Esc back"
+			: this.question.multiSelect
+				? "↑↓ · Space toggle · Enter submit · c collapse · Esc cancel"
+				: "↑↓ · Enter select · c collapse · Esc cancel";
+		lines.push(truncateToWidth(th.fg("dim", hint), w));
+		lines.push(th.fg("accent", "─".repeat(w)));
+
+		this.cachedWidth = width;
+		this.cachedLines = lines;
+		return lines;
+	}
+
+	invalidate(): void {
+		this.cachedWidth = undefined;
+		this.cachedLines = undefined;
+	}
+}
+
+/**
+ * Show structured question overlay (bottom-center, full width, maxHeight 80%).
+ * Submits via answerQuestion / cancelQuestion on the controller.
+ */
+export async function showQuestionOverlay(
+	ctx: { ui: ExtensionUIContext },
+	controller: WorkflowController,
+): Promise<QuestionOverlayResult> {
+	const state = controller.getState();
+	const question = state.question;
+	if (!question || question.status !== "open") {
+		return { action: "cancelled" };
+	}
+
+	return ctx.ui.custom<QuestionOverlayResult>(
+		(tui, theme, _kb, done) => new QuestionOverlay(tui, theme, question, controller, done),
+		{ overlay: true, overlayOptions: OVERLAY_OPTIONS },
+	);
+}

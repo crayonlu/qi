@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- Added built-in `qi-workflow` extension with session-scoped goals, todos, plans, tasks/workflows, jobs, structured questions, `/btw`, MCP panel, rewind, and cleanup commands/tools.
+
 ## [0.81.1] - 2026-07-21
 
 ### New Features
