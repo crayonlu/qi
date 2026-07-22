@@ -105,18 +105,20 @@ async function executeWorkflow(workflowId: string, options: RunWorkflowOptions):
 				}),
 			);
 		} else if (workflow.mode === "chain") {
+			let previousSummary: string | undefined;
 			for (const taskId of taskIds) {
 				if (isCancelRequested(workflowId, options.signal)) {
 					workflowController.apply((state) => cancelWorkflow(state, workflowId));
 					break;
 				}
-				summaries.push(
-					await runTask(taskId, {
-						cwd: options.cwd,
-						model: options.model,
-						signal: options.signal,
-					}),
-				);
+				const summary = await runTask(taskId, {
+					cwd: options.cwd,
+					model: options.model,
+					signal: options.signal,
+					previousSummary,
+				});
+				summaries.push(summary);
+				previousSummary = summary;
 			}
 		} else {
 			const limit = Math.min(WORKFLOW_MAX_PARALLEL, taskIds.length);

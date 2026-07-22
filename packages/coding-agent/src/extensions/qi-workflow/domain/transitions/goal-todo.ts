@@ -1,3 +1,4 @@
+import { isContradictoryCompletionSummary } from "../../vendor/goal/contradiction.ts";
 import { newId, nowMs } from "../ids.ts";
 import type { TransitionResult } from "../result.ts";
 import type { Goal, GoalStatus, QiWorkflowState, TodoItem, TodoStatus } from "../types.ts";
@@ -87,12 +88,18 @@ export function clearGoal(state: QiWorkflowState): TransitionResult<null> {
 
 export function completeGoal(state: QiWorkflowState, evidence: string, expectedId?: string): TransitionResult<Goal> {
 	if (!state.goal) return fail(state, "No active goal");
-	if (expectedId && state.goal.id !== expectedId) return fail(state, "Stale goal id");
+	// When provided (model tools), goal_id must match; slash/UI may omit it.
+	if (expectedId !== undefined && state.goal.id !== expectedId) {
+		return fail(state, "goal_id does not match the current goal");
+	}
 	if (state.goal.status === "completed" || state.goal.status === "cancelled") {
 		return fail(state, `Goal already ${state.goal.status}`);
 	}
 	const trimmed = evidence.trim();
 	if (!trimmed) return fail(state, "Completion evidence is required");
+	if (isContradictoryCompletionSummary(trimmed)) {
+		return fail(state, "Completion summary is contradictory (says not complete / tests failing)");
+	}
 	const goal = {
 		...state.goal,
 		status: "completed" as GoalStatus,
@@ -106,7 +113,9 @@ export function completeGoal(state: QiWorkflowState, evidence: string, expectedI
 
 export function blockGoal(state: QiWorkflowState, reason: string, expectedId?: string): TransitionResult<Goal> {
 	if (!state.goal) return fail(state, "No active goal");
-	if (expectedId && state.goal.id !== expectedId) return fail(state, "Stale goal id");
+	if (expectedId !== undefined && state.goal.id !== expectedId) {
+		return fail(state, "goal_id does not match the current goal");
+	}
 	const trimmed = reason.trim();
 	if (!trimmed) return fail(state, "Block reason is required");
 	const goal = {

@@ -10,6 +10,7 @@ import {
 	cancelTodo,
 	completeGoal,
 	completeTodo,
+	markPlanReady,
 	moveTodo,
 	openQuestion,
 	type PlanSections,
@@ -20,6 +21,7 @@ import {
 } from "../domain/index.ts";
 import { jobManager } from "../runtime/index.ts";
 import { showQuestionOverlay } from "../ui/index.ts";
+import { normalizePlanModeCompletion, PLAN_MODE_COMPLETE_TOOL_NAME } from "../vendor/plan/completion-tool.ts";
 
 const DETAILS_HINT = "Open /todos or the dashboard for details.";
 
@@ -49,9 +51,9 @@ export function registerQiWorkflowTools(pi: ExtensionAPI): void {
 		name: "goal_complete",
 		label: "Goal Complete",
 		description:
-			"Mark the active goal completed with verifiable evidence. Optional goalId must match the current goal.",
+			"Mark the active goal completed with verifiable evidence. goalId is required and must match the current goal.",
 		parameters: Type.Object({
-			goalId: Type.Optional(Type.String({ description: "Current goal id (optional; rejects if stale)" })),
+			goalId: Type.String({ description: "Current goal id (required; rejects if stale)" }),
 			evidence: Type.String({ description: "Completion evidence proving the objective is met" }),
 		}),
 		async execute(_toolCallId, params) {
@@ -80,9 +82,9 @@ export function registerQiWorkflowTools(pi: ExtensionAPI): void {
 	pi.registerTool({
 		name: "goal_blocked",
 		label: "Goal Blocked",
-		description: "Mark the active goal blocked with a reason. Optional goalId must match the current goal.",
+		description: "Mark the active goal blocked with a reason. goalId is required and must match the current goal.",
 		parameters: Type.Object({
-			goalId: Type.Optional(Type.String({ description: "Current goal id (optional; rejects if stale)" })),
+			goalId: Type.String({ description: "Current goal id (required; rejects if stale)" }),
 			reason: Type.String({ description: "Why the goal cannot proceed" }),
 		}),
 		async execute(_toolCallId, params) {
@@ -257,6 +259,49 @@ export function registerQiWorkflowTools(pi: ExtensionAPI): void {
 			const keys = sectionKeys.filter((k) => args[k] !== undefined);
 			return new Text(
 				theme.fg("toolTitle", theme.bold("plan_update ")) + theme.fg("muted", keys.join(", ") || "…"),
+				0,
+				0,
+			);
+		},
+		renderResult(result, _options, theme) {
+			const text = result.content[0]?.type === "text" ? result.content[0].text : "";
+			const err = text.startsWith("Error:");
+			return new Text(theme.fg(err ? "error" : "success", summarize(text, 100)), 0, 0);
+		},
+	});
+
+	pi.registerTool({
+		name: PLAN_MODE_COMPLETE_TOOL_NAME,
+		label: "Plan Mode Complete",
+		description: "Mark the draft plan ready with a decision-ready Markdown plan body (typed markPlanReady).",
+		parameters: Type.Object({
+			plan: Type.String({ description: "Complete decision-ready implementation plan in Markdown" }),
+			revision: Type.Optional(Type.Number({ description: "Expected plan revision" })),
+		}),
+		async execute(_toolCallId, params) {
+			const normalized = normalizePlanModeCompletion({ plan: params.plan });
+			if (!normalized.ok) return failResult(normalized.error);
+			// Persist plan body into steps when empty so ready conversion has content.
+			const current = workflowController.getState().plan;
+			if (current && current.sections.steps.length === 0) {
+				const patched = workflowController.apply((state) =>
+					updatePlanSections(state, { steps: [normalized.plan] }, params.revision),
+				);
+				if (!patched.ok) return failResult(patched.error);
+			}
+			const result = workflowController.apply((state) => markPlanReady(state, params.revision));
+			if (!result.ok) return failResult(result.error);
+			return textResult(`Plan ready (rev ${result.value.revision}). ${DETAILS_HINT}`, {
+				action: PLAN_MODE_COMPLETE_TOOL_NAME,
+				revision: result.value.revision,
+				status: result.value.status,
+				plan: normalized.plan,
+			});
+		},
+		renderCall(args, theme) {
+			return new Text(
+				theme.fg("toolTitle", theme.bold(`${PLAN_MODE_COMPLETE_TOOL_NAME} `)) +
+					theme.fg("muted", summarize(args.plan, 50)),
 				0,
 				0,
 			);

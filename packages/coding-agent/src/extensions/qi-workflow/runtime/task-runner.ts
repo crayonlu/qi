@@ -16,6 +16,8 @@ export interface RunTaskOptions {
 	signal?: AbortSignal;
 	/** Optional agent/system append text (kept short; no UI). */
 	appendSystemPrompt?: string;
+	/** Prior chain step summary injected as `{previous}` handoff context. */
+	previousSummary?: string;
 }
 
 function boundSummary(text: string): string {
@@ -89,7 +91,9 @@ export async function runTask(taskId: string, options: RunTaskOptions = {}): Pro
 	}
 
 	try {
-		await session.prompt(task.goal);
+		const previous = options.previousSummary?.trim();
+		const prompt = previous ? `${task.goal}\n\n{previous}\n${previous}` : task.goal;
+		await session.prompt(prompt);
 		await session.waitForIdle();
 
 		const current = findTask(task.id);

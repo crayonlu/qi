@@ -35,6 +35,7 @@
 			"!**/models.generated.ts",
 			"!**/*.models.ts",
 			"!packages/mom/data/**/*",
+			"!packages/coding-agent/src/extensions/qi-workflow/vendor/**/*",
 			"!!**/node_modules"
 		]
 	}

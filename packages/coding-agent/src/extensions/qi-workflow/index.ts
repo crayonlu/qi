@@ -4,7 +4,7 @@ import { registerQiWorkflowCommands } from "./commands/register.ts";
 import { workflowController } from "./controller.ts";
 import { GOAL_INSTRUCTIONS } from "./prompts/goal.ts";
 import { PLAN_INSTRUCTIONS } from "./prompts/plan.ts";
-import { attachGoalContinuation, jobManager, mcpManager } from "./runtime/index.ts";
+import { attachGoalContinuation, checkpointFiles, jobManager, MUTATING_TOOLS, mcpManager } from "./runtime/index.ts";
 import { registerQiWorkflowTools } from "./tools/register.ts";
 import { subscribeQiUi } from "./ui/index.ts";
 
@@ -17,6 +17,7 @@ export default function qiWorkflowExtension(pi: ExtensionAPI): void {
 	registerQiWorkflowCommands(pi);
 	registerQiWorkflowTools(pi);
 	attachGoalContinuation(pi);
+	mcpManager.registerProxyTool(pi);
 
 	let unsubscribeUi: (() => void) | undefined;
 
@@ -38,12 +39,31 @@ export default function qiWorkflowExtension(pi: ExtensionAPI): void {
 			jobManager.recover();
 		}
 		mcpManager.discover(ctx.cwd);
+		mcpManager.registerProxyTool(pi, ctx.cwd);
 		bindUi(ctx);
 	});
 
 	pi.on("session_shutdown", () => {
 		unsubscribeUi?.();
 		unsubscribeUi = undefined;
+		void mcpManager.shutdown();
+	});
+
+	pi.on("tool_execution_end", async (event, ctx) => {
+		if (!MUTATING_TOOLS.has(event.toolName)) return;
+		if (event.isError) return;
+		try {
+			await checkpointFiles({
+				cwd: ctx.cwd,
+				sessionId: ctx.sessionManager.getSessionId(),
+				trigger: "tool",
+				toolName: event.toolName,
+				description: `${event.toolName} checkpoint`,
+				entryId: ctx.sessionManager.getLeafId() ?? undefined,
+			});
+		} catch {
+			// Checkpoint failures must not block the agent turn.
+		}
 	});
 
 	pi.on("before_agent_start", (event) => {

@@ -60,6 +60,39 @@ function completions(prefix: string, options: string[]): AutocompleteItem[] | nu
 	return filtered.length > 0 ? filtered.map((value) => ({ value, label: value })) : null;
 }
 
+function todoIdCompletions(prefix: string): AutocompleteItem[] | null {
+	const ids = workflowController.getState().todos.map((todo) => todo.id);
+	return completions(prefix, ids);
+}
+
+/** Second-level completions: actions, then todo ids where applicable. */
+function todoArgumentCompletions(prefix: string): AutocompleteItem[] | null {
+	const actions = ["add", "start", "block", "done", "cancel", "remove", "move"];
+	const spaceIndex = prefix.indexOf(" ");
+	if (spaceIndex === -1) {
+		return completions(prefix.trim(), actions);
+	}
+	const action = prefix.slice(0, spaceIndex).trim();
+	if (!actions.includes(action) || action === "add") {
+		return null;
+	}
+	const rest = prefix.slice(spaceIndex + 1);
+	if (action === "move") {
+		const moveSpace = rest.indexOf(" ");
+		if (moveSpace === -1) {
+			return todoIdCompletions(rest.trimStart());
+		}
+		// Position hints after id
+		return completions(rest.slice(moveSpace + 1).trimStart(), ["0", "1", "2", "3", "4", "5"]);
+	}
+	// id-taking actions; allow optional trailing text without further completions
+	const idSpace = rest.indexOf(" ");
+	if (idSpace === -1) {
+		return todoIdCompletions(rest.trimStart());
+	}
+	return null;
+}
+
 function firstToken(args: string): { cmd: string; rest: string } {
 	const trimmed = args.trim();
 	if (!trimmed) return { cmd: "", rest: "" };
@@ -174,6 +207,8 @@ async function handlePlanExecute(ctx: ExtensionCommandContext): Promise<void> {
 export function registerQiWorkflowCommands(pi: ExtensionAPI): void {
 	pi.registerCommand("goal", {
 		description: "Show, set, pause, resume, clear, or edit the session goal",
+		category: "start",
+		argumentHint: "<objective> | edit <objective> | pause | resume | clear",
 		getArgumentCompletions: (prefix) => completions(prefix, ["pause", "resume", "clear", "edit"]),
 		handler: async (args, ctx) => {
 			const trimmed = args.trim();
@@ -213,6 +248,7 @@ export function registerQiWorkflowCommands(pi: ExtensionAPI): void {
 
 	pi.registerCommand("todos", {
 		description: "Open the Qi dashboard Todo tab",
+		category: "work",
 		handler: async (_args, ctx) => {
 			if (!requireUi(ctx, "todos")) return;
 			await openDashboard(ctx, workflowController, "todo");
@@ -221,8 +257,9 @@ export function registerQiWorkflowCommands(pi: ExtensionAPI): void {
 
 	pi.registerCommand("todo", {
 		description: "Manage todos: add|start|block|done|cancel|remove|move",
-		getArgumentCompletions: (prefix) =>
-			completions(prefix, ["add", "start", "block", "done", "cancel", "remove", "move"]),
+		category: "work",
+		argumentHint: "add <text> | start <id> | block <id> <reason> | done <id> [verification] | …",
+		getArgumentCompletions: todoArgumentCompletions,
 		handler: async (args, ctx) => {
 			const { cmd, rest } = firstToken(args);
 			if (!cmd) {
@@ -305,6 +342,8 @@ export function registerQiWorkflowCommands(pi: ExtensionAPI): void {
 
 	pi.registerCommand("plan", {
 		description: "Plan mode: open dashboard, start, edit, ready, execute, discard",
+		category: "start",
+		argumentHint: "<goal> | edit <goal> | ready | execute | discard",
 		getArgumentCompletions: (prefix) => completions(prefix, ["edit", "ready", "execute", "discard"]),
 		handler: async (args, ctx) => {
 			const trimmed = args.trim();
@@ -344,6 +383,8 @@ export function registerQiWorkflowCommands(pi: ExtensionAPI): void {
 
 	pi.registerCommand("workflow", {
 		description: "Run, background, status, await, or cancel workflows",
+		category: "start",
+		argumentHint: "run <goal> | background <goal> | status <id> | await <id> | cancel <id>",
 		getArgumentCompletions: (prefix) => completions(prefix, ["run", "background", "status", "await", "cancel"]),
 		handler: async (args, ctx) => {
 			const { cmd, rest } = firstToken(args);
@@ -432,6 +473,7 @@ export function registerQiWorkflowCommands(pi: ExtensionAPI): void {
 
 	pi.registerCommand("tasks", {
 		description: "Open the Qi dashboard Task tab",
+		category: "work",
 		handler: async (_args, ctx) => {
 			if (!requireUi(ctx, "tasks")) return;
 			await openDashboard(ctx, workflowController, "task");
@@ -440,7 +482,17 @@ export function registerQiWorkflowCommands(pi: ExtensionAPI): void {
 
 	pi.registerCommand("task", {
 		description: "Task status, cancel, or attach",
-		getArgumentCompletions: (prefix) => completions(prefix, ["status", "cancel", "attach"]),
+		category: "work",
+		argumentHint: "status <id> | cancel <id> | attach <id>",
+		getArgumentCompletions: (prefix) => {
+			const actions = ["status", "cancel", "attach"];
+			const spaceIndex = prefix.indexOf(" ");
+			if (spaceIndex === -1) return completions(prefix.trim(), actions);
+			const action = prefix.slice(0, spaceIndex).trim();
+			if (!actions.includes(action)) return null;
+			const ids = workflowController.getState().tasks.map((task) => task.id);
+			return completions(prefix.slice(spaceIndex + 1).trimStart(), ids);
+		},
 		handler: async (args, ctx) => {
 			const { cmd, rest } = firstToken(args);
 			if (!cmd || !rest) {
@@ -480,6 +532,7 @@ export function registerQiWorkflowCommands(pi: ExtensionAPI): void {
 
 	pi.registerCommand("jobs", {
 		description: "Open the Qi dashboard Job tab",
+		category: "work",
 		handler: async (_args, ctx) => {
 			if (!requireUi(ctx, "jobs")) return;
 			await openDashboard(ctx, workflowController, "job");
@@ -488,6 +541,7 @@ export function registerQiWorkflowCommands(pi: ExtensionAPI): void {
 
 	pi.registerCommand("ask", {
 		description: "Show the pending structured question overlay",
+		category: "work",
 		handler: async (_args, ctx) => {
 			const question = workflowController.getState().question;
 			if (!question || question.status !== "open") {
@@ -509,6 +563,7 @@ export function registerQiWorkflowCommands(pi: ExtensionAPI): void {
 
 	pi.registerCommand("btw", {
 		description: "Ask a side question without writing into the main transcript",
+		category: "work",
 		handler: async (args, ctx) => {
 			const question = args.trim();
 			if (!question) {
@@ -521,7 +576,7 @@ export function registerQiWorkflowCommands(pi: ExtensionAPI): void {
 			}
 			try {
 				ctx.ui.notify("Running /btw side turn…", "info");
-				await runBtwSideTurn(question, { cwd: ctx.cwd, model: ctx.model, signal: ctx.signal });
+				await runBtwSideTurn(question, { cwd: ctx.cwd, model: ctx.model, signal: ctx.signal, ctx });
 				if (ctx.hasUI && ctx.mode === "tui") {
 					await showBtwOverlay(ctx, workflowController);
 				} else {
@@ -536,8 +591,80 @@ export function registerQiWorkflowCommands(pi: ExtensionAPI): void {
 
 	pi.registerCommand("mcp", {
 		description: "Discover and manage MCP servers",
-		handler: async (_args, ctx) => {
+		category: "integrations",
+		argumentHint: "inspect | enable <server> | disable <server> | reconnect <server> | auth <server>",
+		getArgumentCompletions: (prefix) => {
+			const actions = ["inspect", "enable", "disable", "reconnect", "auth"];
+			const trimmed = prefix.trim();
+			const spaceIndex = prefix.indexOf(" ");
+			if (spaceIndex === -1) {
+				return completions(trimmed, actions);
+			}
+			const action = prefix.slice(0, spaceIndex).trim();
+			if (!actions.includes(action)) {
+				return null;
+			}
+			const serverPrefix = prefix.slice(spaceIndex + 1).trimStart();
+			const servers = mcpManager.list().map((server) => server.name);
+			return completions(serverPrefix, servers);
+		},
+		handler: async (args, ctx) => {
 			mcpManager.discover(ctx.cwd);
+			const { cmd, rest } = firstToken(args);
+			if (cmd === "inspect" || cmd === "enable" || cmd === "disable" || cmd === "reconnect" || cmd === "auth") {
+				if (!rest) {
+					notifyResult(ctx, false, `Usage: /mcp ${cmd} <server>`);
+					return;
+				}
+				if (cmd === "enable") {
+					mcpManager.enable(rest);
+					notifyResult(ctx, true, `Enabled MCP server ${rest}`);
+					return;
+				}
+				if (cmd === "disable") {
+					mcpManager.disable(rest);
+					notifyResult(ctx, true, `Disabled MCP server ${rest}`);
+					return;
+				}
+				if (cmd === "reconnect") {
+					try {
+						await mcpManager.reconnect(rest, ctx.cwd);
+						notifyResult(ctx, true, `Reconnected MCP server ${rest}`);
+					} catch (err) {
+						notifyResult(ctx, false, err instanceof Error ? err.message : String(err));
+					}
+					return;
+				}
+				if (cmd === "auth") {
+					try {
+						const result = await mcpManager.auth(rest, ctx.cwd);
+						notifyResult(ctx, result.ok, result.message);
+					} catch (err) {
+						notifyResult(ctx, false, err instanceof Error ? err.message : String(err));
+					}
+					return;
+				}
+				const info = mcpManager.inspect(rest);
+				if (!info) {
+					notifyResult(ctx, false, `Server not found: ${rest}`);
+					return;
+				}
+				const tools = info.tools.length ? info.tools.join(", ") : "(no tools)";
+				ctx.ui.notify(
+					[
+						`Name: ${info.server.name}`,
+						`Status: ${info.server.status}`,
+						`Transport: ${info.server.transport}`,
+						`Source: ${info.server.sourcePath ?? "(none)"}`,
+						`Tools (${info.tools.length}): ${tools}`,
+						info.server.error ? `Error: ${info.server.error}` : undefined,
+					]
+						.filter(Boolean)
+						.join("\n"),
+					"info",
+				);
+				return;
+			}
 			if (!requireUi(ctx, "mcp")) {
 				const servers = mcpManager.list();
 				ctx.ui.notify(
@@ -577,6 +704,8 @@ export function registerQiWorkflowCommands(pi: ExtensionAPI): void {
 
 	pi.registerCommand("rewind", {
 		description: "Open the rewind / restore panel",
+		category: "session",
+		hidden: true,
 		handler: async (_args, ctx) => {
 			if (!requireUi(ctx, "rewind")) return;
 			const checkpoints = listRewindCheckpoints();
@@ -603,6 +732,8 @@ export function registerQiWorkflowCommands(pi: ExtensionAPI): void {
 
 	pi.registerCommand("cleanup", {
 		description: "Dry-run cleanup report; use --apply in headless to delete",
+		category: "session",
+		hidden: true,
 		getArgumentCompletions: (prefix) => completions(prefix, ["--apply", "apply"]),
 		handler: async (args, ctx) => {
 			const wantApply = /(?:^|\s)(--apply|apply)(?:\s|$)/i.test(args);

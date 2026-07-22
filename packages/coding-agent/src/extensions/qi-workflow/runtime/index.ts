@@ -19,7 +19,9 @@ export {
 	mcpManager,
 } from "./mcp-manager.ts";
 export {
+	checkpointFiles,
 	listRewindCheckpoints,
+	MUTATING_TOOLS,
 	type RewindRestoreOptions,
 	restoreRewind,
 } from "./rewind.ts";
