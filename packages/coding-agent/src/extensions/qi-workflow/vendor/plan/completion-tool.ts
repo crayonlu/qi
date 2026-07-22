@@ -1,3 +1,4 @@
+// @ts-nocheck
 export const PLAN_MODE_COMPLETE_TOOL_NAME = "plan_mode_complete";
 export const PLAN_MODE_COMPLETE_VERSION = 1;
 export const PLAN_MODE_MAX_CHARS = 50_000;
@@ -22,7 +23,9 @@ export const PLAN_MODE_COMPLETE_PARAMS = {
 	},
 } as const;
 
-type NormalizePlanModeCompletionResult = { ok: true; plan: string } | { ok: false; error: string };
+type NormalizePlanModeCompletionResult =
+	| { ok: true; plan: string }
+	| { ok: false; error: string };
 
 export function normalizePlanModeCompletion(input: unknown): NormalizePlanModeCompletionResult {
 	if (!isRecord(input) || typeof input.plan !== "string") {
@@ -41,7 +44,10 @@ export function normalizePlanModeCompletion(input: unknown): NormalizePlanModeCo
 
 export function planFromCompletionDetails(value: unknown) {
 	if (!isRecord(value)) return undefined;
-	if (value.version !== PLAN_MODE_COMPLETE_VERSION || value.source !== PLAN_MODE_COMPLETE_TOOL_NAME) {
+	if (
+		value.version !== PLAN_MODE_COMPLETE_VERSION ||
+		value.source !== PLAN_MODE_COMPLETE_TOOL_NAME
+	) {
 		return undefined;
 	}
 	const normalized = normalizePlanModeCompletion({ plan: value.plan });

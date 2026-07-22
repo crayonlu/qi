@@ -1,5 +1,6 @@
 import type { ExtensionAPI, ExtensionContext } from "../../core/extensions/types.ts";
 import type { SessionManager } from "../../core/session-manager.ts";
+import { registerSubagentTools } from "./adapters/index.ts";
 import { registerQiWorkflowCommands } from "./commands/register.ts";
 import { workflowController } from "./controller.ts";
 import { GOAL_INSTRUCTIONS } from "./prompts/goal.ts";
@@ -16,6 +17,7 @@ export default function qiWorkflowExtension(pi: ExtensionAPI): void {
 	workflowController.bindApi(pi);
 	registerQiWorkflowCommands(pi);
 	registerQiWorkflowTools(pi);
+	registerSubagentTools(pi);
 	attachGoalContinuation(pi);
 	mcpManager.registerProxyTool(pi);
 

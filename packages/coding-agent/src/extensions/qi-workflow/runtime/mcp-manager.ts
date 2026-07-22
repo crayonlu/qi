@@ -84,7 +84,11 @@ export class McpManager {
 			const existing = workflowController.getState().mcpServers.find((s) => s.name === name);
 			const enabled = existing?.enabled !== false;
 			if (entry.lifecycle === "keep-alive") {
-				this.lifecycle.markKeepAlive(name, entry);
+				if (enabled) {
+					this.lifecycle.markKeepAlive(name, entry);
+				} else {
+					this.lifecycle.unmarkKeepAlive(name);
+				}
 				if (enabled && !this.manager.getConnection(name)) {
 					void this.manager
 						.connect(name, entry)
@@ -135,16 +139,30 @@ export class McpManager {
 	}
 
 	enable(name: string): McpServerState {
+		const config = this.configs.get(name);
 		const result = workflowController.apply((state) => setMcpEnabled(state, name, true));
 		if (!result.ok) throw new Error(result.error);
+		if (config?.definition.lifecycle === "keep-alive") {
+			this.lifecycle.markKeepAlive(name, config.definition);
+		}
 		return result.value;
 	}
 
 	disable(name: string): McpServerState {
+		this.lifecycle.unmarkKeepAlive(name);
 		void this.manager.close(name);
 		const result = workflowController.apply((state) => setMcpEnabled(state, name, false));
 		if (!result.ok) throw new Error(result.error);
 		return result.value;
+	}
+
+	/** Whether keep-alive reconnect is armed (for Qi /mcp enable|disable tests). */
+	isKeepAliveMarked(name: string): boolean {
+		return this.lifecycle.isKeepAlive(name);
+	}
+
+	hasHealthCheckInterval(): boolean {
+		return this.lifecycle.hasHealthCheckInterval();
 	}
 
 	async reconnect(name: string, cwd: string = process.cwd()): Promise<McpServerState> {
@@ -300,10 +318,13 @@ export class McpManager {
 					if (!self.manager.getConnection(serverName)) {
 						await self.manager.connect(serverName, config.definition);
 					}
-					const result = await self.manager.callTool(
-						serverName,
-						params.tool,
-						toolArgs,
+					const connection = self.manager.getConnection(serverName);
+					if (!connection || connection.status !== "connected") {
+						return textResult(`Error: server not connected: ${serverName}`, { error: "not_connected" });
+					}
+					const result = await connection.client.callTool(
+						{ name: params.tool, arguments: toolArgs },
+						undefined,
 						self.manager.getRequestOptions(serverName, signal),
 					);
 					const text =

@@ -1,96 +1,113 @@
-import { logger } from "./logger.ts";
-import type { McpServerManager } from "./server-manager.ts";
+// @ts-nocheck
 import type { ServerDefinition } from "./types.ts";
+import type { McpServerManager } from "./server-manager.ts";
+import { logger } from "./logger.ts";
 
 export type ReconnectCallback = (serverName: string) => void;
 
 export class McpLifecycleManager {
-	private manager: McpServerManager;
-	private keepAliveServers = new Map<string, ServerDefinition>();
-	private allServers = new Map<string, ServerDefinition>();
-	private serverSettings = new Map<string, { idleTimeout?: number }>();
-	private globalIdleTimeout: number = 10 * 60 * 1000;
-	private healthCheckInterval?: NodeJS.Timeout;
-	private onReconnect?: ReconnectCallback;
-	private onIdleShutdown?: (serverName: string) => void;
+  private manager: McpServerManager;
+  private keepAliveServers = new Map<string, ServerDefinition>();
+  private allServers = new Map<string, ServerDefinition>();
+  private serverSettings = new Map<string, { idleTimeout?: number }>();
+  private globalIdleTimeout: number = 10 * 60 * 1000;
+  private healthCheckInterval?: NodeJS.Timeout;
+  private onReconnect?: ReconnectCallback;
+  private onIdleShutdown?: (serverName: string) => void;
+  
+  constructor(manager: McpServerManager) {
+    this.manager = manager;
+  }
+  
+  /**
+   * Set callback to be invoked after a successful auto-reconnect.
+   * Use this to update tool metadata when a server reconnects.
+   */
+  setReconnectCallback(callback: ReconnectCallback): void {
+    this.onReconnect = callback;
+  }
+  
+  markKeepAlive(name: string, definition: ServerDefinition): void {
+    this.keepAliveServers.set(name, definition);
+  }
 
-	constructor(manager: McpServerManager) {
-		this.manager = manager;
-	}
+  /** Stop auto-reconnect for a server (Qi /mcp disable). */
+  unmarkKeepAlive(name: string): void {
+    this.keepAliveServers.delete(name);
+  }
 
-	/**
-	 * Set callback to be invoked after a successful auto-reconnect.
-	 * Use this to update tool metadata when a server reconnects.
-	 */
-	setReconnectCallback(callback: ReconnectCallback): void {
-		this.onReconnect = callback;
-	}
+  /** Whether keep-alive reconnect is armed for this server (Qi enable/disable). */
+  isKeepAlive(name: string): boolean {
+    return this.keepAliveServers.has(name);
+  }
 
-	markKeepAlive(name: string, definition: ServerDefinition): void {
-		this.keepAliveServers.set(name, definition);
-	}
+  /** True while a health-check interval is scheduled. */
+  hasHealthCheckInterval(): boolean {
+    return this.healthCheckInterval !== undefined;
+  }
 
-	registerServer(name: string, definition: ServerDefinition, settings?: { idleTimeout?: number }): void {
-		this.allServers.set(name, definition);
-		if (settings?.idleTimeout !== undefined) {
-			this.serverSettings.set(name, settings);
-		}
-	}
+  registerServer(name: string, definition: ServerDefinition, settings?: { idleTimeout?: number }): void {
+    this.allServers.set(name, definition);
+    if (settings?.idleTimeout !== undefined) {
+      this.serverSettings.set(name, settings);
+    }
+  }
 
-	setGlobalIdleTimeout(minutes: number): void {
-		this.globalIdleTimeout = minutes * 60 * 1000;
-	}
+  setGlobalIdleTimeout(minutes: number): void {
+    this.globalIdleTimeout = minutes * 60 * 1000;
+  }
 
-	setIdleShutdownCallback(callback: (serverName: string) => void): void {
-		this.onIdleShutdown = callback;
-	}
+  setIdleShutdownCallback(callback: (serverName: string) => void): void {
+    this.onIdleShutdown = callback;
+  }
+  
+  startHealthChecks(intervalMs = 30000): void {
+    if (this.healthCheckInterval) {
+      clearInterval(this.healthCheckInterval);
+    }
+    this.healthCheckInterval = setInterval(() => {
+      this.checkConnections();
+    }, intervalMs);
+    this.healthCheckInterval.unref();
+  }
+  
+  private async checkConnections(): Promise<void> {
+    for (const [name, definition] of this.keepAliveServers) {
+      const connection = this.manager.getConnection(name);
+      
+      if (!connection || connection.status !== "connected") {
+        try {
+          await this.manager.connect(name, definition);
+          logger.debug(`Reconnected to ${name}`);
+          // Notify extension to update metadata
+          this.onReconnect?.(name);
+        } catch (error) {
+          console.error(`MCP: Failed to reconnect to ${name}:`, error);
+        }
+      }
+    }
 
-	startHealthChecks(intervalMs = 30000): void {
-		if (this.healthCheckInterval) {
-			clearInterval(this.healthCheckInterval);
-		}
-		this.healthCheckInterval = setInterval(() => {
-			this.checkConnections();
-		}, intervalMs);
-		this.healthCheckInterval.unref();
-	}
+    for (const [name] of this.allServers) {
+      if (this.keepAliveServers.has(name)) continue;
+      const timeout = this.getIdleTimeout(name);
+      if (timeout > 0 && this.manager.isIdle(name, timeout)) {
+        await this.manager.close(name);
+        this.onIdleShutdown?.(name);
+      }
+    }
+  }
 
-	private async checkConnections(): Promise<void> {
-		for (const [name, definition] of this.keepAliveServers) {
-			const connection = this.manager.getConnection(name);
-
-			if (!connection || connection.status !== "connected") {
-				try {
-					await this.manager.connect(name, definition);
-					logger.debug(`Reconnected to ${name}`);
-					// Notify extension to update metadata
-					this.onReconnect?.(name);
-				} catch (error) {
-					console.error(`MCP: Failed to reconnect to ${name}:`, error);
-				}
-			}
-		}
-
-		for (const [name] of this.allServers) {
-			if (this.keepAliveServers.has(name)) continue;
-			const timeout = this.getIdleTimeout(name);
-			if (timeout > 0 && this.manager.isIdle(name, timeout)) {
-				await this.manager.close(name);
-				this.onIdleShutdown?.(name);
-			}
-		}
-	}
-
-	private getIdleTimeout(name: string): number {
-		const perServer = this.serverSettings.get(name)?.idleTimeout;
-		if (perServer !== undefined) return perServer * 60 * 1000;
-		return this.globalIdleTimeout;
-	}
-
-	async gracefulShutdown(): Promise<void> {
-		if (this.healthCheckInterval) {
-			clearInterval(this.healthCheckInterval);
-		}
-		await this.manager.closeAll();
-	}
+  private getIdleTimeout(name: string): number {
+    const perServer = this.serverSettings.get(name)?.idleTimeout;
+    if (perServer !== undefined) return perServer * 60 * 1000;
+    return this.globalIdleTimeout;
+  }
+  
+  async gracefulShutdown(): Promise<void> {
+    if (this.healthCheckInterval) {
+      clearInterval(this.healthCheckInterval);
+      this.healthCheckInterval = undefined;
+    }
+    await this.manager.closeAll();
+  }
 }

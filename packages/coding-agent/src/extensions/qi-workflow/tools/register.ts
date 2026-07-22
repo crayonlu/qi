@@ -2,26 +2,28 @@ import { StringEnum } from "@earendil-works/pi-ai";
 import { Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 import type { ExtensionAPI } from "../../../core/extensions/types.ts";
+import {
+	addTodoViaVendor,
+	blockGoalViaVendor,
+	completeGoalViaVendor,
+	listTodosViaVendor,
+	mutateTodoViaVendor,
+	normalizePlanBody,
+	PLAN_MODE_COMPLETE_TOOL_NAME,
+	resolveVendorTodoId,
+	validateAskQuestions,
+} from "../adapters/index.ts";
 import { workflowController } from "../controller.ts";
 import {
-	addTodo,
-	blockGoal,
 	blockTodo,
-	cancelTodo,
-	completeGoal,
-	completeTodo,
 	markPlanReady,
-	moveTodo,
 	openQuestion,
 	type PlanSections,
 	type QuestionOption,
-	removeTodo,
-	startTodo,
 	updatePlanSections,
 } from "../domain/index.ts";
 import { jobManager } from "../runtime/index.ts";
 import { showQuestionOverlay } from "../ui/index.ts";
-import { normalizePlanModeCompletion, PLAN_MODE_COMPLETE_TOOL_NAME } from "../vendor/plan/completion-tool.ts";
 
 const DETAILS_HINT = "Open /todos or the dashboard for details.";
 
@@ -57,7 +59,9 @@ export function registerQiWorkflowTools(pi: ExtensionAPI): void {
 			evidence: Type.String({ description: "Completion evidence proving the objective is met" }),
 		}),
 		async execute(_toolCallId, params) {
-			const result = workflowController.apply((state) => completeGoal(state, params.evidence, params.goalId));
+			const result = workflowController.apply((state) =>
+				completeGoalViaVendor(state, params.evidence, params.goalId),
+			);
 			if (!result.ok) return failResult(result.error);
 			return textResult(`Goal completed (${shortId(result.value.id)}). ${DETAILS_HINT}`, {
 				action: "goal_complete",
@@ -88,7 +92,7 @@ export function registerQiWorkflowTools(pi: ExtensionAPI): void {
 			reason: Type.String({ description: "Why the goal cannot proceed" }),
 		}),
 		async execute(_toolCallId, params) {
-			const result = workflowController.apply((state) => blockGoal(state, params.reason, params.goalId));
+			const result = workflowController.apply((state) => blockGoalViaVendor(state, params.reason, params.goalId));
 			if (!result.ok) return failResult(result.error);
 			return textResult(
 				`Goal blocked (${shortId(result.value.id)}): ${summarize(params.reason, 80)}. ${DETAILS_HINT}`,
@@ -129,18 +133,23 @@ export function registerQiWorkflowTools(pi: ExtensionAPI): void {
 		async execute(_toolCallId, params) {
 			switch (params.action) {
 				case "list": {
+					const listed = listTodosViaVendor();
 					const todos = workflowController.getState().todos;
-					if (todos.length === 0) return textResult(`No todos. ${DETAILS_HINT}`, { action: "list", count: 0 });
-					const lines = todos
-						.slice()
-						.sort((a, b) => a.position - b.position)
-						.map((t) => `[${t.status}] ${shortId(t.id)} ${t.text}`)
-						.join("\n");
-					return textResult(`${lines}\n${DETAILS_HINT}`, { action: "list", count: todos.length });
+					if (listed.count === 0 && todos.length === 0) {
+						return textResult(`No todos. ${DETAILS_HINT}`, { action: "list", count: 0 });
+					}
+					const lines =
+						listed.content ||
+						todos
+							.slice()
+							.sort((a, b) => a.position - b.position)
+							.map((t) => `[${t.status}] ${shortId(t.id)} ${t.text}`)
+							.join("\n");
+					return textResult(`${lines}\n${DETAILS_HINT}`, { action: "list", count: listed.count || todos.length });
 				}
 				case "add": {
 					if (!params.text) return failResult("text required for add");
-					const result = workflowController.apply((state) => addTodo(state, params.text!));
+					const result = workflowController.apply((state) => addTodoViaVendor(state, params.text!));
 					if (!result.ok) return failResult(result.error);
 					return textResult(`Added todo ${shortId(result.value.id)}. ${DETAILS_HINT}`, {
 						action: "add",
@@ -149,11 +158,15 @@ export function registerQiWorkflowTools(pi: ExtensionAPI): void {
 				}
 				case "start": {
 					if (!params.id) return failResult("id required for start");
-					const result = workflowController.apply((state) => startTodo(state, params.id!));
+					const vendorId = resolveVendorTodoId(params.id);
+					if (vendorId === undefined) return failResult(`Unknown todo id: ${params.id}`);
+					const result = workflowController.apply((state) =>
+						mutateTodoViaVendor(state, "update", { id: vendorId, status: "in_progress" }),
+					);
 					if (!result.ok) return failResult(result.error);
-					return textResult(`Started todo ${shortId(result.value.id)}. ${DETAILS_HINT}`, {
+					return textResult(`Started todo ${shortId(params.id)}. ${DETAILS_HINT}`, {
 						action: "start",
-						id: result.value.id,
+						id: params.id,
 					});
 				}
 				case "block": {
@@ -168,37 +181,37 @@ export function registerQiWorkflowTools(pi: ExtensionAPI): void {
 				}
 				case "done": {
 					if (!params.id) return failResult("id required for done");
-					const result = workflowController.apply((state) => completeTodo(state, params.id!, params.verification));
+					const vendorId = resolveVendorTodoId(params.id);
+					if (vendorId === undefined) return failResult(`Unknown todo id: ${params.id}`);
+					const result = workflowController.apply((state) =>
+						mutateTodoViaVendor(state, "update", {
+							id: vendorId,
+							status: "completed",
+							metadata: params.verification ? { verification: params.verification } : undefined,
+						}),
+					);
 					if (!result.ok) return failResult(result.error);
-					return textResult(`Completed todo ${shortId(result.value.id)}. ${DETAILS_HINT}`, {
+					return textResult(`Completed todo ${shortId(params.id)}. ${DETAILS_HINT}`, {
 						action: "done",
-						id: result.value.id,
+						id: params.id,
 					});
 				}
-				case "cancel": {
-					if (!params.id) return failResult("id required for cancel");
-					const result = workflowController.apply((state) => cancelTodo(state, params.id!));
-					if (!result.ok) return failResult(result.error);
-					return textResult(`Cancelled todo ${shortId(result.value.id)}. ${DETAILS_HINT}`, {
-						action: "cancel",
-						id: result.value.id,
-					});
-				}
+				case "cancel":
 				case "remove": {
-					if (!params.id) return failResult("id required for remove");
-					const result = workflowController.apply((state) => removeTodo(state, params.id!));
-					if (!result.ok) return failResult(result.error);
-					return textResult(`Removed todo. ${DETAILS_HINT}`, { action: "remove", id: params.id });
-				}
-				case "move": {
-					if (!params.id) return failResult("id required for move");
-					if (params.position === undefined) return failResult("position required for move");
-					const result = workflowController.apply((state) => moveTodo(state, params.id!, params.position!));
+					if (!params.id) return failResult("id required");
+					const vendorId = resolveVendorTodoId(params.id);
+					if (vendorId === undefined) return failResult(`Unknown todo id: ${params.id}`);
+					const result = workflowController.apply((state) =>
+						mutateTodoViaVendor(state, "delete", { id: vendorId }),
+					);
 					if (!result.ok) return failResult(result.error);
 					return textResult(
-						`Moved todo ${shortId(result.value.id)} to position ${result.value.position}. ${DETAILS_HINT}`,
-						{ action: "move", id: result.value.id, position: result.value.position },
+						`${params.action === "cancel" ? "Cancelled" : "Removed"} todo ${shortId(params.id)}. ${DETAILS_HINT}`,
+						{ action: params.action, id: params.id },
 					);
+				}
+				case "move": {
+					return failResult("move is not supported via vendor task store; use dashboard reorder");
 				}
 				default:
 					return failResult(`Unknown action: ${String((params as { action: string }).action)}`);
@@ -279,7 +292,7 @@ export function registerQiWorkflowTools(pi: ExtensionAPI): void {
 			revision: Type.Optional(Type.Number({ description: "Expected plan revision" })),
 		}),
 		async execute(_toolCallId, params) {
-			const normalized = normalizePlanModeCompletion({ plan: params.plan });
+			const normalized = normalizePlanBody(params.plan);
 			if (!normalized.ok) return failResult(normalized.error);
 			// Persist plan body into steps when empty so ready conversion has content.
 			const current = workflowController.getState().plan;
@@ -341,6 +354,9 @@ export function registerQiWorkflowTools(pi: ExtensionAPI): void {
 			if (!ctx.hasUI) {
 				return failResult("ask_user_question requires interactive UI");
 			}
+
+			const validated = validateAskQuestions(params.questions);
+			if (!validated.ok) return failResult(validated.message);
 
 			const answers: Array<{ prompt: string; answerSummary?: string; cancelled?: boolean }> = [];
 

@@ -1,3 +1,4 @@
+// @ts-nocheck
 export const DEFAULT_MAX_OUTPUT_BYTES = 50 * 1024;
 export const DEFAULT_MAX_STDERR_BYTES = 16 * 1024;
 export const DEFAULT_MAX_CONTEXT_BYTES = 50 * 1024;

@@ -1,14 +1,19 @@
 import type { AutocompleteItem } from "@earendil-works/pi-tui";
 import type { ExtensionAPI, ExtensionCommandContext } from "../../../core/extensions/types.ts";
+import {
+	addTodoViaVendor,
+	mutateTodoViaVendor,
+	pauseGoalViaVendor,
+	resolveVendorTodoId,
+	resumeGoalViaVendor,
+	setGoalViaVendor,
+} from "../adapters/index.ts";
 import { workflowController } from "../controller.ts";
 import {
-	addTodo,
 	attachTask,
 	blockTodo,
 	cancelTask,
-	cancelTodo,
 	clearGoal,
-	completeTodo,
 	createWorkflow,
 	discardPlan,
 	editGoal,
@@ -16,13 +21,7 @@ import {
 	executePlanToTodos,
 	executePlanToWorkflow,
 	markPlanReady,
-	moveTodo,
-	pauseGoal,
-	removeTodo,
-	resumeGoal,
-	setGoal,
 	startPlan,
-	startTodo,
 	type WorkflowMode,
 } from "../domain/index.ts";
 import {
@@ -218,12 +217,12 @@ export function registerQiWorkflowCommands(pi: ExtensionAPI): void {
 			}
 			const { cmd, rest } = firstToken(trimmed);
 			if (cmd === "pause") {
-				const r = workflowController.apply((s) => pauseGoal(s));
+				const r = workflowController.apply((s) => pauseGoalViaVendor(s));
 				notifyResult(ctx, r.ok, r.ok ? "Goal paused." : r.error);
 				return;
 			}
 			if (cmd === "resume") {
-				const r = workflowController.apply((s) => resumeGoal(s));
+				const r = workflowController.apply((s) => resumeGoalViaVendor(s));
 				notifyResult(ctx, r.ok, r.ok ? "Goal resumed." : r.error);
 				return;
 			}
@@ -241,7 +240,7 @@ export function registerQiWorkflowCommands(pi: ExtensionAPI): void {
 				notifyResult(ctx, r.ok, r.ok ? "Goal updated." : r.error);
 				return;
 			}
-			const r = workflowController.apply((s) => setGoal(s, trimmed));
+			const r = workflowController.apply((s) => setGoalViaVendor(s, trimmed));
 			notifyResult(ctx, r.ok, r.ok ? `Goal set: ${r.value.objective}` : r.error);
 		},
 	});
@@ -272,7 +271,7 @@ export function registerQiWorkflowCommands(pi: ExtensionAPI): void {
 						notifyResult(ctx, false, "Usage: /todo add <text>");
 						return;
 					}
-					const r = workflowController.apply((s) => addTodo(s, rest));
+					const r = workflowController.apply((s) => addTodoViaVendor(s, rest));
 					notifyResult(ctx, r.ok, r.ok ? `Added ${shortId(r.value.id)}` : r.error);
 					return;
 				}
@@ -281,8 +280,15 @@ export function registerQiWorkflowCommands(pi: ExtensionAPI): void {
 						notifyResult(ctx, false, "Usage: /todo start <id>");
 						return;
 					}
-					const r = workflowController.apply((s) => startTodo(s, rest));
-					notifyResult(ctx, r.ok, r.ok ? `Started ${shortId(r.value.id)}` : r.error);
+					const vendorId = resolveVendorTodoId(rest);
+					if (vendorId === undefined) {
+						notifyResult(ctx, false, `Unknown todo id: ${rest}`);
+						return;
+					}
+					const r = workflowController.apply((s) =>
+						mutateTodoViaVendor(s, "update", { id: vendorId, status: "in_progress" }),
+					);
+					notifyResult(ctx, r.ok, r.ok ? `Started ${shortId(rest)}` : r.error);
 					return;
 				}
 				case "block": {
@@ -291,6 +297,7 @@ export function registerQiWorkflowCommands(pi: ExtensionAPI): void {
 						notifyResult(ctx, false, "Usage: /todo block <id> <reason>");
 						return;
 					}
+					// Vendor TaskStatus has no blocked; keep Qi projection field for board.
 					const r = workflowController.apply((s) => blockTodo(s, id, reason));
 					notifyResult(ctx, r.ok, r.ok ? `Blocked ${shortId(r.value.id)}` : r.error);
 					return;
@@ -301,37 +308,42 @@ export function registerQiWorkflowCommands(pi: ExtensionAPI): void {
 						notifyResult(ctx, false, "Usage: /todo done <id> [verification]");
 						return;
 					}
-					const r = workflowController.apply((s) => completeTodo(s, id, verification || undefined));
-					notifyResult(ctx, r.ok, r.ok ? `Done ${shortId(r.value.id)}` : r.error);
-					return;
-				}
-				case "cancel": {
-					if (!rest) {
-						notifyResult(ctx, false, "Usage: /todo cancel <id>");
+					const vendorId = resolveVendorTodoId(id);
+					if (vendorId === undefined) {
+						notifyResult(ctx, false, `Unknown todo id: ${id}`);
 						return;
 					}
-					const r = workflowController.apply((s) => cancelTodo(s, rest));
-					notifyResult(ctx, r.ok, r.ok ? `Cancelled ${shortId(r.value.id)}` : r.error);
+					const r = workflowController.apply((s) =>
+						mutateTodoViaVendor(s, "update", {
+							id: vendorId,
+							status: "completed",
+							metadata: verification ? { verification } : undefined,
+						}),
+					);
+					notifyResult(ctx, r.ok, r.ok ? `Done ${shortId(id)}` : r.error);
 					return;
 				}
+				case "cancel":
 				case "remove": {
 					if (!rest) {
-						notifyResult(ctx, false, "Usage: /todo remove <id>");
+						notifyResult(ctx, false, `Usage: /todo ${cmd} <id>`);
 						return;
 					}
-					const r = workflowController.apply((s) => removeTodo(s, rest));
-					notifyResult(ctx, r.ok, r.ok ? "Removed todo." : r.error);
+					const vendorId = resolveVendorTodoId(rest);
+					if (vendorId === undefined) {
+						notifyResult(ctx, false, `Unknown todo id: ${rest}`);
+						return;
+					}
+					const r = workflowController.apply((s) => mutateTodoViaVendor(s, "delete", { id: vendorId }));
+					notifyResult(
+						ctx,
+						r.ok,
+						r.ok ? (cmd === "cancel" ? `Cancelled ${shortId(rest)}` : "Removed todo.") : r.error,
+					);
 					return;
 				}
 				case "move": {
-					const { cmd: id, rest: posStr } = firstToken(rest);
-					const position = Number(posStr);
-					if (!id || posStr === "" || Number.isNaN(position)) {
-						notifyResult(ctx, false, "Usage: /todo move <id> <position>");
-						return;
-					}
-					const r = workflowController.apply((s) => moveTodo(s, id, position));
-					notifyResult(ctx, r.ok, r.ok ? `Moved ${shortId(r.value.id)} → ${r.value.position}` : r.error);
+					notifyResult(ctx, false, "Use the todo tool or dashboard to reorder; vendor store is id-based.");
 					return;
 				}
 				default:
