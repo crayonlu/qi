@@ -11,6 +11,7 @@ describe("slash-command-catalog", () => {
 	test("maps builtins into expected categories", () => {
 		expect(resolveBuiltinCategory("new")).toBe("session");
 		expect(resolveBuiltinCategory("model")).toBe("configure");
+		expect(resolveBuiltinCategory("models")).toBe("configure");
 		expect(resolveBuiltinCategory("export")).toBe("share");
 		expect(resolveBuiltinCategory("hotkeys")).toBe("help");
 	});

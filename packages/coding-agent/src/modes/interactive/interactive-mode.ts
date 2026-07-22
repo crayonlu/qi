@@ -47,6 +47,7 @@ import {
 	getAuthPath,
 	getDebugLogPath,
 	getDocsPath,
+	getModelsPath,
 	getShareViewerUrl,
 	VERSION,
 } from "../../config.ts";
@@ -610,6 +611,15 @@ export class InteractiveMode {
 					label: item.id,
 					description: item.provider,
 				}));
+			};
+		}
+
+		const modelsCommand = slashCommands.find((command) => command.name === "models");
+		if (modelsCommand) {
+			modelsCommand.getArgumentCompletions = (prefix: string): AutocompleteItem[] | null => {
+				const actions = ["add", "add-model", "edit", "edit-model", "remove", "remove-model", "validate", "reload"];
+				const filtered = actions.filter((a) => a.startsWith(prefix.trim()));
+				return filtered.length > 0 ? filtered.map((value) => ({ value, label: value })) : null;
 			};
 		}
 
@@ -2679,6 +2689,12 @@ export class InteractiveMode {
 				await this.showModelsSelector();
 				return;
 			}
+			if (text === "/models" || text.startsWith("/models ")) {
+				const args = text === "/models" ? "" : text.slice("/models ".length).trim();
+				this.editor.setText("");
+				await this.handleModelsCommand(args);
+				return;
+			}
 			if (text === "/model" || text.startsWith("/model ")) {
 				const searchTerm = text.startsWith("/model ") ? text.slice(7).trim() : undefined;
 				this.editor.setText("");
@@ -4318,6 +4334,13 @@ export class InteractiveMode {
 	}
 
 	private async handleModelCommand(searchTerm?: string): Promise<void> {
+		// Always reload models.json before presenting choices so external edits appear.
+		try {
+			await this.session.modelRuntime.reloadConfig();
+		} catch (error) {
+			this.showError(`Failed to reload models.json: ${error instanceof Error ? error.message : String(error)}`);
+		}
+
 		if (!searchTerm) {
 			this.showModelSelector();
 			return;
@@ -4339,6 +4362,106 @@ export class InteractiveMode {
 		}
 
 		this.showModelSelector(searchTerm);
+	}
+
+	private async handleModelsCommand(args: string): Promise<void> {
+		const {
+			parseProviderModelRef,
+			runModelsAddModelFastPath,
+			runModelsAddWizard,
+			runModelsEditModel,
+			runModelsEditProvider,
+			runModelsPanel,
+			runModelsReload,
+			runModelsRemoveModel,
+			runModelsRemoveProvider,
+			runModelsValidate,
+		} = await import("./models-config/commands.ts");
+
+		const ui = this.createExtensionUIContext();
+		const modelRegistry = this.session.extensionRunner.getModelRegistry();
+		const host = {
+			ui: {
+				select: ui.select.bind(ui),
+				confirm: ui.confirm.bind(ui),
+				input: ui.input.bind(ui),
+				notify: ui.notify.bind(ui),
+			},
+			modelRegistry,
+			currentModelLabel: this.session.model ? `${this.session.model.provider}/${this.session.model.id}` : undefined,
+			isBuiltinProvider: (providerId: string) => this.session.modelRuntime.hasBuiltinProvider(providerId),
+			getModelsPath: () => getModelsPath(),
+		};
+
+		const { cmd, rest } = (() => {
+			const trimmed = args.trim();
+			if (!trimmed) return { cmd: "", rest: "" };
+			const m = /^(\S+)\s*(.*)$/s.exec(trimmed);
+			return { cmd: m?.[1] ?? "", rest: (m?.[2] ?? "").trim() };
+		})();
+
+		let pendingSwitch: { provider: string; model: string } | undefined;
+
+		if (!cmd) {
+			const result = await runModelsPanel(host);
+			pendingSwitch = result.pendingSwitch;
+		} else if (cmd === "add") {
+			const result = await runModelsAddWizard(host);
+			pendingSwitch = result.pendingSwitch;
+		} else if (cmd === "add-model") {
+			if (!rest) {
+				this.showError("Usage: /models add-model <provider>");
+				return;
+			}
+			await runModelsAddModelFastPath(host, rest);
+		} else if (cmd === "edit") {
+			if (!rest) {
+				this.showError("Usage: /models edit <provider>");
+				return;
+			}
+			await runModelsEditProvider(host, rest);
+		} else if (cmd === "edit-model") {
+			const ref = parseProviderModelRef(rest);
+			if (!ref) {
+				this.showError("Usage: /models edit-model <provider>/<model>");
+				return;
+			}
+			await runModelsEditModel(host, ref.provider, ref.model);
+		} else if (cmd === "remove") {
+			if (!rest) {
+				this.showError("Usage: /models remove <provider>");
+				return;
+			}
+			await runModelsRemoveProvider(host, rest);
+		} else if (cmd === "remove-model") {
+			const ref = parseProviderModelRef(rest);
+			if (!ref) {
+				this.showError("Usage: /models remove-model <provider>/<model>");
+				return;
+			}
+			await runModelsRemoveModel(host, ref.provider, ref.model);
+		} else if (cmd === "validate") {
+			await runModelsValidate(host);
+		} else if (cmd === "reload") {
+			await runModelsReload(host);
+		} else {
+			this.showError("Usage: /models [add|add-model|edit|edit-model|remove|remove-model|validate|reload]");
+			return;
+		}
+
+		if (pendingSwitch) {
+			const model = modelRegistry.find(pendingSwitch.provider, pendingSwitch.model);
+			if (model) {
+				try {
+					await this.session.setModel(model);
+					this.footer.invalidate();
+					this.updateEditorBorderColor();
+					this.showStatus(`Model: ${model.provider}/${model.id}`);
+				} catch (error) {
+					this.showError(error instanceof Error ? error.message : String(error));
+				}
+			}
+		}
 	}
 
 	private async findExactModelMatch(searchTerm: string): Promise<Model<any> | undefined> {

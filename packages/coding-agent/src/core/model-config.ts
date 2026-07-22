@@ -201,7 +201,30 @@ const validateModelsConfig = Compile(ModelsConfigSchema);
 export type ModelsJsonModel = Static<typeof ModelDefinitionSchema>;
 export type ModelsJsonModelOverride = Static<typeof ModelOverrideSchema>;
 export type ModelsJsonProvider = Static<typeof ProviderConfigSchema>;
-type ModelsJson = Static<typeof ModelsConfigSchema>;
+export type ModelsJson = Static<typeof ModelsConfigSchema>;
+
+export const MODEL_PROVIDER_APIS = [
+	"openai-completions",
+	"openai-responses",
+	"anthropic-messages",
+	"google-generative-ai",
+] as const;
+export type ModelProviderApi = (typeof MODEL_PROVIDER_APIS)[number];
+
+export type ModelsJsonValidationResult = { ok: true; value: ModelsJson } | { ok: false; error: string };
+
+/** Schema-validate a models.json document object (after JSONC parse). */
+export function validateModelsJsonDocument(parsed: unknown): ModelsJsonValidationResult {
+	if (!validateModelsConfig.Check(parsed)) {
+		const errors =
+			validateModelsConfig
+				.Errors(parsed)
+				.map((error) => `  - ${formatValidationPath(error)}: ${error.message}`)
+				.join("\n") || "Unknown schema error";
+		return { ok: false, error: `Invalid models.json schema:\n${errors}` };
+	}
+	return { ok: true, value: parsed as ModelsJson };
+}
 
 function formatValidationPath(error: TLocalizedValidationError): string {
 	if (error.keyword === "required") {

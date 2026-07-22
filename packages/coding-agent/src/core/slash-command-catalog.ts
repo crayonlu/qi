@@ -66,6 +66,7 @@ const BUILTIN_CATEGORY: Record<string, CommandCatalogCategoryId> = {
 	mcp: "integrations",
 	llama: "integrations",
 	model: "configure",
+	models: "configure",
 	"scoped-models": "configure",
 	settings: "configure",
 	login: "configure",
