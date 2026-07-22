@@ -4,7 +4,8 @@
 
 ### Added
 
-- Added built-in `qi-workflow` extension with session-scoped goals, todos, plans, tasks/workflows, jobs, structured questions, `/btw`, MCP panel, rewind, and cleanup commands/tools.
+- Added built-in `qi-workflow` extension with session-scoped goals, todos, plans, tasks/workflows, jobs, structured questions, `/btw`, MCP panel, rewind, and cleanup commands/tools. Selected MIT reference implementations are adopted in-tree under `extensions/qi-workflow/vendor` (not as third-party npm extension deps); MCP uses `@modelcontextprotocol/sdk` for stdio/HTTP/SSE + OAuth lifecycle.
+- Interactive slash autocomplete now opens a categorized command browser (landing categories, global fuzzy search across names/descriptions/aliases/categories, source badges, collapsed Templates/Skills/Extensions) while keeping flat command names like `/plan` and `/new` unchanged.
 
 ## [0.81.1] - 2026-07-21
 

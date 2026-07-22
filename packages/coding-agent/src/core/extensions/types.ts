@@ -1150,6 +1150,14 @@ export interface RegisteredCommand {
 	name: string;
 	sourceInfo: SourceInfo;
 	description?: string;
+	/** Explicit slash-browser category id (e.g. "integrations"). Unknown → Extensions. */
+	category?: string;
+	aliases?: string[];
+	/** Callable when typed, but omitted from the slash browser. */
+	hidden?: boolean;
+	priority?: number;
+	/** Shown in autocomplete for argument discovery (e.g. "add <text> | start <id>"). */
+	argumentHint?: string;
 	getArgumentCompletions?: (argumentPrefix: string) => AutocompleteItem[] | null | Promise<AutocompleteItem[] | null>;
 	handler: (args: string, ctx: ExtensionCommandContext) => Promise<void>;
 }

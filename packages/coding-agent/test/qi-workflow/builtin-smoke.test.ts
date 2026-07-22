@@ -68,5 +68,18 @@ describe("qi-workflow built-in interactive smoke", () => {
 		expect(workflowController.getState().goal?.status).toBe("paused");
 		await harness.session.prompt("/goal resume");
 		expect(workflowController.getState().goal?.status).toBe("active");
+
+		// Slash catalog: Qi commands are categorized and argument-completable.
+		const registered = harness.session.extensionRunner.getRegisteredCommands();
+		const todoCmd = registered.find((c) => c.name === "todo");
+		expect(todoCmd?.category).toBe("work");
+		expect(todoCmd?.getArgumentCompletions).toBeTypeOf("function");
+		const todoArgs = await todoCmd!.getArgumentCompletions!("st");
+		expect(todoArgs?.some((item) => item.value === "start")).toBe(true);
+
+		const mcpCmd = registered.find((c) => c.name === "mcp");
+		expect(mcpCmd?.category).toBe("integrations");
+		const mcpArgs = await mcpCmd!.getArgumentCompletions!("re");
+		expect(mcpArgs?.some((item) => item.value === "reconnect")).toBe(true);
 	});
 });

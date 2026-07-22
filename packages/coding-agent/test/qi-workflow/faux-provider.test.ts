@@ -51,6 +51,7 @@ describe("qi-workflow faux provider flows", () => {
 
 		workflowController.apply((s) => setGoal(s, "Ship workflow layer"));
 		expect(workflowController.getState().goal?.status).toBe("active");
+		const goalId = workflowController.getState().goal!.id;
 
 		harness.session.setActiveToolsByName([
 			...harness.session.getActiveToolNames().filter((n) => n !== "bash"),
@@ -58,7 +59,7 @@ describe("qi-workflow faux provider flows", () => {
 		]);
 
 		harness.setResponses([
-			fauxAssistantMessage(fauxToolCall("goal_complete", { evidence: "All focused tests pass" }), {
+			fauxAssistantMessage(fauxToolCall("goal_complete", { goalId, evidence: "All focused tests pass" }), {
 				stopReason: "toolUse",
 			}),
 			fauxAssistantMessage("Goal completed with evidence."),

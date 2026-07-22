@@ -659,6 +659,10 @@ export class Editor implements Component, Focusable {
 		// Handle autocomplete mode
 		if (this.autocompleteState && this.autocompleteList) {
 			if (kb.matches(data, "tui.select.cancel")) {
+				if (this.autocompleteProvider?.handleBack?.()) {
+					this.requestAutocomplete({ force: false, explicitTab: true });
+					return;
+				}
 				this.cancelAutocomplete();
 				return;
 			}
@@ -683,6 +687,11 @@ export class Editor implements Component, Focusable {
 					this.state.lines = result.lines;
 					this.state.cursorLine = result.cursorLine;
 					this.setCursorCol(result.cursorCol);
+					if (result.keepOpen) {
+						if (this.onChange) this.onChange(this.getText());
+						this.requestAutocomplete({ force: false, explicitTab: true });
+						return;
+					}
 					this.cancelAutocomplete();
 					if (this.onChange) this.onChange(this.getText());
 				}
@@ -704,6 +713,12 @@ export class Editor implements Component, Focusable {
 					this.state.lines = result.lines;
 					this.state.cursorLine = result.cursorLine;
 					this.setCursorCol(result.cursorCol);
+
+					if (result.keepOpen) {
+						if (this.onChange) this.onChange(this.getText());
+						this.requestAutocomplete({ force: false, explicitTab: true });
+						return;
+					}
 
 					if (this.autocompletePrefix.startsWith("/")) {
 						this.cancelAutocomplete();
@@ -2106,17 +2121,25 @@ export class Editor implements Component, Focusable {
 	 *
 	 * Matching is case-sensitive and checks item.value only.
 	 */
-	private getBestAutocompleteMatchIndex(items: Array<{ value: string; label: string }>, prefix: string): number {
+	private getBestAutocompleteMatchIndex(
+		items: Array<{ value: string; label: string; selectable?: boolean; isHeader?: boolean }>,
+		prefix: string,
+	): number {
 		if (!prefix) return -1;
+
+		const matchPrefix = prefix.startsWith("/") ? prefix.slice(1) : prefix;
+		if (!matchPrefix) return -1;
 
 		let firstPrefixIndex = -1;
 
 		for (let i = 0; i < items.length; i++) {
-			const value = items[i]!.value;
-			if (value === prefix) {
+			const item = items[i]!;
+			if (item.selectable === false || item.isHeader) continue;
+			const value = item.value;
+			if (value === matchPrefix || value === prefix) {
 				return i; // Exact match always wins
 			}
-			if (firstPrefixIndex === -1 && value.startsWith(prefix)) {
+			if (firstPrefixIndex === -1 && value.startsWith(matchPrefix)) {
 				firstPrefixIndex = i;
 			}
 		}
@@ -2126,7 +2149,15 @@ export class Editor implements Component, Focusable {
 
 	private createAutocompleteList(
 		prefix: string,
-		items: Array<{ value: string; label: string; description?: string }>,
+		items: Array<{
+			value: string;
+			label: string;
+			description?: string;
+			selectable?: boolean;
+			isHeader?: boolean;
+			isGroup?: boolean;
+			groupId?: string;
+		}>,
 	): SelectList {
 		const layout = prefix.startsWith("/") ? SLASH_COMMAND_SELECT_LIST_LAYOUT : undefined;
 		return new SelectList(items, this.autocompleteMaxVisible, this.theme.selectList, layout);
@@ -2263,20 +2294,36 @@ export class Editor implements Component, Focusable {
 			return;
 		}
 
-		if (options.force && options.explicitTab && suggestions.items.length === 1) {
-			const item = suggestions.items[0]!;
+		const soleSelectable =
+			suggestions.items.length === 1
+				? suggestions.items[0]
+				: suggestions.items.filter((item) => item.selectable !== false && !item.isHeader);
+		const autoApplyItem =
+			options.force &&
+			options.explicitTab &&
+			(Array.isArray(soleSelectable) ? soleSelectable.length === 1 : Boolean(soleSelectable))
+				? Array.isArray(soleSelectable)
+					? soleSelectable[0]
+					: soleSelectable
+				: undefined;
+		if (autoApplyItem && !autoApplyItem.isGroup) {
 			this.pushUndoSnapshot();
 			this.lastAction = null;
 			const result = this.autocompleteProvider.applyCompletion(
 				this.state.lines,
 				this.state.cursorLine,
 				this.state.cursorCol,
-				item,
+				autoApplyItem,
 				suggestions.prefix,
 			);
 			this.state.lines = result.lines;
 			this.state.cursorLine = result.cursorLine;
 			this.setCursorCol(result.cursorCol);
+			if (result.keepOpen) {
+				if (this.onChange) this.onChange(this.getText());
+				this.requestAutocomplete({ force: false, explicitTab: true });
+				return;
+			}
 			if (this.onChange) this.onChange(this.getText());
 			this.tui.requestRender();
 			return;

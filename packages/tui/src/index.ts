@@ -2,11 +2,16 @@
 
 // Autocomplete support
 export {
+	type AutocompleteApplyResult,
+	type AutocompleteContextHints,
 	type AutocompleteItem,
 	type AutocompleteProvider,
 	type AutocompleteSuggestions,
+	type CombinedAutocompleteOptions,
 	CombinedAutocompleteProvider,
+	type SlashCategoryDefinition,
 	type SlashCommand,
+	type SlashCommandSourceKind,
 } from "./autocomplete.ts";
 // Components
 export { Box } from "./components/box.ts";

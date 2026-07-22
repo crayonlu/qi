@@ -19,7 +19,6 @@ import type {
 	MarkdownTheme,
 	OverlayHandle,
 	OverlayOptions,
-	SlashCommand,
 } from "@earendil-works/pi-tui";
 import {
 	CombinedAutocompleteProvider,
@@ -81,12 +80,18 @@ import { DefaultPackageManager } from "../../core/package-manager.ts";
 import type { ResourceDiagnostic } from "../../core/resource-loader.ts";
 import { formatMissingSessionCwdPrompt, MissingSessionCwdError } from "../../core/session-cwd.ts";
 import { type SessionEntry, SessionManager, sessionEntryToContextMessages } from "../../core/session-manager.ts";
+import {
+	buildSlashCommandCatalog,
+	type CommandCatalogCategoryId,
+	SLASH_CATEGORIES,
+} from "../../core/slash-command-catalog.ts";
 import { BUILTIN_SLASH_COMMANDS } from "../../core/slash-commands.ts";
 import type { SourceInfo } from "../../core/source-info.ts";
 import { isInstallTelemetryEnabled } from "../../core/telemetry.ts";
 import type { TruncationResult } from "../../core/tools/truncate.ts";
 import { hasTrustRequiringProjectResources, ProjectTrustStore } from "../../core/trust-manager.ts";
 import { getUsageCostBreakdown } from "../../core/usage-totals.ts";
+import { workflowController } from "../../extensions/qi-workflow/controller.ts";
 import { getChangelogPath, getNewEntries, normalizeChangelogLinks, parseChangelog } from "../../utils/changelog.ts";
 import { copyToClipboard, readClipboardText } from "../../utils/clipboard.ts";
 import { extensionForImageMimeType, readClipboardImage } from "../../utils/clipboard-image.ts";
@@ -538,12 +543,48 @@ export class InteractiveMode {
 	}
 
 	private createBaseAutocompleteProvider(): AutocompleteProvider {
-		// Define commands for autocomplete
-		const slashCommands: SlashCommand[] = BUILTIN_SLASH_COMMANDS.map((command) => ({
-			name: command.name,
-			description: command.description,
-			...(command.argumentHint && { argumentHint: command.argumentHint }),
+		const extensionCommands = this.session.extensionRunner
+			? this.session.extensionRunner.getRegisteredCommands().map((cmd) => ({
+					name: cmd.name,
+					invocationName: cmd.invocationName,
+					description: cmd.description,
+					displayDescription: this.prefixAutocompleteDescription(cmd.description, cmd.sourceInfo),
+					argumentHint: cmd.argumentHint,
+					category: cmd.category,
+					aliases: cmd.aliases,
+					hidden: cmd.hidden,
+					priority: cmd.priority,
+					getArgumentCompletions: cmd.getArgumentCompletions,
+				}))
+			: [];
+
+		const templateCommands = this.session.promptTemplates.map((cmd) => ({
+			name: cmd.name,
+			description: cmd.description,
+			displayDescription: this.prefixAutocompleteDescription(cmd.description, cmd.sourceInfo),
+			argumentHint: cmd.argumentHint,
 		}));
+
+		this.skillCommands.clear();
+		const skillCommands: Array<{ name: string; description?: string; displayDescription?: string }> = [];
+		if (this.settingsManager.getEnableSkillCommands()) {
+			for (const skill of this.session.resourceLoader.getSkills().skills) {
+				const commandName = `skill:${skill.name}`;
+				this.skillCommands.set(commandName, skill.filePath);
+				skillCommands.push({
+					name: commandName,
+					description: skill.description,
+					displayDescription: this.prefixAutocompleteDescription(skill.description, skill.sourceInfo),
+				});
+			}
+		}
+
+		const slashCommands = buildSlashCommandCatalog({
+			builtins: BUILTIN_SLASH_COMMANDS,
+			extensionCommands,
+			templates: templateCommands,
+			skills: skillCommands,
+		});
 
 		const modelCommand = slashCommands.find((command) => command.name === "model");
 		if (modelCommand) {
@@ -584,43 +625,30 @@ export class InteractiveMode {
 			};
 		}
 
-		// Convert prompt templates to SlashCommand format for autocomplete
-		const templateCommands: SlashCommand[] = this.session.promptTemplates.map((cmd) => ({
-			name: cmd.name,
-			description: this.prefixAutocompleteDescription(cmd.description, cmd.sourceInfo),
-			...(cmd.argumentHint && { argumentHint: cmd.argumentHint }),
-		}));
+		return new CombinedAutocompleteProvider(slashCommands, this.sessionManager.getCwd(), this.fdPath, {
+			categorized: true,
+			categories: [...SLASH_CATEGORIES],
+			contextHints: () => this.getSlashAutocompleteContextHints(),
+		});
+	}
 
-		// Convert extension commands to SlashCommand format
-		const builtinCommandNames = new Set(slashCommands.map((c) => c.name));
-		const extensionCommands: SlashCommand[] = this.session.extensionRunner
-			.getRegisteredCommands()
-			.filter((cmd) => !builtinCommandNames.has(cmd.name))
-			.map((cmd) => ({
-				name: cmd.invocationName,
-				description: this.prefixAutocompleteDescription(cmd.description, cmd.sourceInfo),
-				getArgumentCompletions: cmd.getArgumentCompletions,
-			}));
-
-		// Build skill commands from session.skills (if enabled)
-		this.skillCommands.clear();
-		const skillCommandList: SlashCommand[] = [];
-		if (this.settingsManager.getEnableSkillCommands()) {
-			for (const skill of this.session.resourceLoader.getSkills().skills) {
-				const commandName = `skill:${skill.name}`;
-				this.skillCommands.set(commandName, skill.filePath);
-				skillCommandList.push({
-					name: commandName,
-					description: this.prefixAutocompleteDescription(skill.description, skill.sourceInfo),
-				});
-			}
+	/** Soft contextual ordering for the empty `/` category landing. */
+	private getSlashAutocompleteContextHints(): { preferredCategories?: CommandCatalogCategoryId[] } {
+		const preferred: CommandCatalogCategoryId[] = [];
+		const state = workflowController.getState();
+		if (state.goal?.status === "active") {
+			preferred.push("work");
 		}
-
-		return new CombinedAutocompleteProvider(
-			[...slashCommands, ...templateCommands, ...extensionCommands, ...skillCommandList],
-			this.sessionManager.getCwd(),
-			this.fdPath,
-		);
+		if (state.mcpServers.length > 0) {
+			preferred.push("integrations");
+		}
+		const messageCount = this.session.messages.length;
+		if (messageCount < 2) {
+			preferred.push("start", "configure");
+		} else if (!preferred.includes("work")) {
+			preferred.push("work");
+		}
+		return { preferredCategories: [...new Set(preferred)] };
 	}
 
 	private setupAutocompleteProvider(): void {
