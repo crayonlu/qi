@@ -11,6 +11,7 @@ export {
 	updateModelInProvider,
 	upsertProvider,
 } from "./document.ts";
+export { type IdValidationResult, validateModelId, validateProviderId } from "./ids.ts";
 export {
 	type AuthReferenceKind,
 	authReferenceLabel,

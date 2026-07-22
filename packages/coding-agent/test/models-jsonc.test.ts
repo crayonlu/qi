@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { InMemoryModelsStore } from "@earendil-works/pi-ai";
@@ -15,6 +15,8 @@ import {
 	redactSecretValue,
 	removeProvider,
 	upsertProvider,
+	validateModelId,
+	validateProviderId,
 } from "../src/core/models-jsonc/index.ts";
 
 describe("models-jsonc mutations", () => {
@@ -54,6 +56,40 @@ describe("models-jsonc mutations", () => {
 		expect(saved).toContain("$ACME_API_KEY");
 		expect(saved).toContain("acme-large");
 		expect(parseModelsJsoncContent(saved).ok).toBe(true);
+	});
+
+	it("successful write creates a readable valid models.json", async () => {
+		const path = tempModelsPath();
+		const content = `{
+  "providers": {
+    "ok": {
+      "api": "openai-completions",
+      "baseUrl": "https://ok.test/v1",
+      "apiKey": "$OK_KEY",
+      "models": [{ "id": "m1", "input": ["text"] }]
+    }
+  }
+}
+`;
+		const write = await atomicWriteModelsJsonc(path, content);
+		expect(write.ok).toBe(true);
+		const saved = readFileSync(path, "utf-8");
+		expect(parseModelsJsoncContent(saved).ok).toBe(true);
+		expect(saved).toContain('"ok"');
+		expect(readdirSync(join(path, "..")).filter((name) => name.includes(".tmp"))).toEqual([]);
+	});
+
+	it("failed write path does not leave an empty .models.json.*.tmp file", async () => {
+		const dir = mkdtempSync(join(tmpdir(), "qi-models-jsonc-fail-"));
+		dirs.push(dir);
+		// Target path is a directory so rename(tmp → path) fails after temp write.
+		const path = join(dir, "models.json");
+		mkdirSync(path);
+		const content = `{ "providers": {} }`;
+		const write = await atomicWriteModelsJsonc(path, content);
+		expect(write.ok).toBe(false);
+		const leftovers = readdirSync(dir).filter((name) => /\.models\.json\..*\.tmp$/.test(name));
+		expect(leftovers).toEqual([]);
 	});
 
 	it("adds a model to an existing provider", async () => {
@@ -119,8 +155,6 @@ describe("models-jsonc mutations", () => {
 }
 `);
 		const { content } = await readModelsJsonc(path);
-		// Schema may strip unknown on validate of whole doc — parseJsonc keeps them in text;
-		// adding a model should not wipe sibling unknown provider fields from the file text.
 		const mutation = addModelToProvider(content, "acme", { id: "two", input: ["text"] });
 		expect(mutation.ok).toBe(true);
 		if (!mutation.ok) return;
@@ -174,5 +208,22 @@ describe("models-jsonc mutations", () => {
 		if (!mutation.ok) return;
 		await atomicWriteModelsJsonc(path, mutation.content);
 		expect(readFileSync(path, "utf-8")).not.toContain('"gone"');
+	});
+});
+
+describe("models id validation", () => {
+	it("rejects invalid provider and model ids without write", () => {
+		expect(validateProviderId("").ok).toBe(false);
+		expect(validateProviderId("  ").ok).toBe(false);
+		expect(validateProviderId("bad id").ok).toBe(false);
+		expect(validateProviderId("a/b").ok).toBe(false);
+		expect(validateProviderId("x".repeat(65)).ok).toBe(false);
+		expect(validateProviderId("acme").ok).toBe(true);
+
+		expect(validateModelId("").ok).toBe(false);
+		expect(validateModelId("has space").ok).toBe(false);
+		expect(validateModelId("org/model").ok).toBe(false);
+		expect(validateModelId("x".repeat(129)).ok).toBe(false);
+		expect(validateModelId("gpt-4.1").ok).toBe(true);
 	});
 });

@@ -25,6 +25,8 @@ import {
 	removeProvider,
 	updateModelInProvider,
 	upsertProvider,
+	validateModelId,
+	validateProviderId,
 } from "../../../core/models-jsonc/index.ts";
 
 export interface ModelsConfigHost {
@@ -50,7 +52,8 @@ async function loadContent(host: ModelsConfigHost): Promise<{ content: string; e
 	return readModelsJsonc(modelsPath(host));
 }
 
-async function saveAndReload(
+/** Write mutation then reload registry. Reload failure keeps the file but is not success. */
+export async function saveAndReload(
 	host: ModelsConfigHost,
 	mutation: ModelsJsoncMutationResult,
 ): Promise<{ ok: true; summary: string } | { ok: false; error: string }> {
@@ -62,12 +65,15 @@ async function saveAndReload(
 	} catch (error) {
 		return {
 			ok: false,
-			error: `Saved models.json but reload failed: ${error instanceof Error ? error.message : String(error)}. File was kept.`,
+			error: `Saved models.json but reload failed: ${error instanceof Error ? error.message : String(error)}. File was kept. /model was not updated.`,
 		};
 	}
 	const reloadError = host.modelRegistry.getError();
 	if (reloadError) {
-		return { ok: false, error: `Saved models.json but reload reported: ${reloadError}. File was kept.` };
+		return {
+			ok: false,
+			error: `Saved models.json but reload reported: ${reloadError}. File was kept. /model was not updated.`,
+		};
 	}
 	return { ok: true, summary: mutation.summary };
 }
@@ -118,16 +124,17 @@ async function promptCredential(host: ModelsConfigHost): Promise<string | undefi
 }
 
 async function promptModelBasics(host: ModelsConfigHost): Promise<ModelsJsonModel | undefined> {
-	const id = await host.ui.input("Model id", "my-model");
-	if (!id?.trim()) {
-		host.ui.notify("Model id is required", "error");
+	const rawId = await host.ui.input("Model id", "my-model");
+	const idCheck = validateModelId(rawId ?? "");
+	if (!idCheck.ok) {
+		host.ui.notify(idCheck.error, "error");
 		return undefined;
 	}
-	const name = await host.ui.input("Display name (optional)", id.trim());
+	const name = await host.ui.input("Display name (optional)", idCheck.id);
 	const reasoning = await host.ui.select("Reasoning model?", ["No", "Yes"]);
 	const inputMode = await host.ui.select("Input modalities", ["text", "text + image"]);
 	const model: ModelsJsonModel = {
-		id: id.trim(),
+		id: idCheck.id,
 		...(name?.trim() ? { name: name.trim() } : {}),
 		reasoning: reasoning === "Yes",
 		input: inputMode === "text + image" ? ["text", "image"] : ["text"],
@@ -178,11 +185,12 @@ async function runCreateProviderWizard(
 	}
 
 	const providerId = await host.ui.input("Provider id", "my-provider");
-	if (!providerId?.trim()) {
-		host.ui.notify("Provider id is required", "error");
+	const idCheck = validateProviderId(providerId ?? "");
+	if (!idCheck.ok) {
+		host.ui.notify(idCheck.error, "error");
 		return;
 	}
-	const id = providerId.trim();
+	const id = idCheck.id;
 
 	const displayName = await host.ui.input("Display name (optional)", id);
 	if (!baseUrl) {
@@ -349,60 +357,85 @@ export async function runModelsReload(host: ModelsConfigHost): Promise<void> {
 }
 
 export async function runModelsRemoveProvider(host: ModelsConfigHost, providerId: string): Promise<void> {
+	const idCheck = validateProviderId(providerId);
+	if (!idCheck.ok) {
+		host.ui.notify(idCheck.error, "error");
+		return;
+	}
 	const { content } = await loadContent(host);
-	const mutation = removeProvider(content, providerId);
+	const mutation = removeProvider(content, idCheck.id);
 	if (!(await showPreviewAndSave(host, mutation))) return;
 	const saved = await saveAndReload(host, mutation);
 	host.ui.notify(saved.ok ? saved.summary : saved.error, saved.ok ? "info" : "error");
 }
 
 export async function runModelsRemoveModel(host: ModelsConfigHost, providerId: string, modelId: string): Promise<void> {
+	const providerCheck = validateProviderId(providerId);
+	if (!providerCheck.ok) {
+		host.ui.notify(providerCheck.error, "error");
+		return;
+	}
+	const modelCheck = validateModelId(modelId);
+	if (!modelCheck.ok) {
+		host.ui.notify(modelCheck.error, "error");
+		return;
+	}
 	const { content } = await loadContent(host);
-	const mutation = removeModelFromProvider(content, providerId, modelId);
+	const mutation = removeModelFromProvider(content, providerCheck.id, modelCheck.id);
 	if (!(await showPreviewAndSave(host, mutation))) return;
 	const saved = await saveAndReload(host, mutation);
 	host.ui.notify(saved.ok ? saved.summary : saved.error, saved.ok ? "info" : "error");
 }
 
 export async function runModelsAddModelFastPath(host: ModelsConfigHost, providerId: string): Promise<void> {
+	const idCheck = validateProviderId(providerId);
+	if (!idCheck.ok) {
+		host.ui.notify(idCheck.error, "error");
+		return;
+	}
 	const { content } = await loadContent(host);
 	const parsed = parseModelsJsoncContent(content);
 	if (!parsed.ok) {
 		host.ui.notify(parsed.error, "error");
 		return;
 	}
-	if (!parsed.document.providers[providerId]) {
-		host.ui.notify(`Provider "${providerId}" not found in models.json`, "error");
+	if (!parsed.document.providers[idCheck.id]) {
+		host.ui.notify(`Provider "${idCheck.id}" not found in models.json`, "error");
 		return;
 	}
-	if (host.isBuiltinProvider?.(providerId)) {
+	if (host.isBuiltinProvider?.(idCheck.id)) {
 		const ok = await host.ui.confirm(
 			"Built-in provider warning",
-			`Adding models under built-in provider "${providerId}" replaces that provider's catalog. Continue?`,
+			`Adding models under built-in provider "${idCheck.id}" replaces that provider's catalog. Continue?`,
 		);
 		if (!ok) return;
 	}
 	const model = await promptModelBasics(host);
 	if (!model) return;
-	const mutation = addModelToProvider(content, providerId, model);
+	const mutation = addModelToProvider(content, idCheck.id, model);
 	if (!(await showPreviewAndSave(host, mutation))) return;
 	const saved = await saveAndReload(host, mutation);
 	host.ui.notify(saved.ok ? `${saved.summary}. Use /model to select it.` : saved.error, saved.ok ? "info" : "error");
 }
 
 export async function runModelsEditProvider(host: ModelsConfigHost, providerId: string): Promise<void> {
+	const idCheck = validateProviderId(providerId);
+	if (!idCheck.ok) {
+		host.ui.notify(idCheck.error, "error");
+		return;
+	}
 	const { content } = await loadContent(host);
 	const parsed = parseModelsJsoncContent(content);
 	if (!parsed.ok) {
 		host.ui.notify(parsed.error, "error");
 		return;
 	}
-	const provider = parsed.document.providers[providerId];
+	const provider = parsed.document.providers[idCheck.id];
 	if (!provider) {
-		host.ui.notify(`Provider "${providerId}" not found`, "error");
+		host.ui.notify(`Provider "${idCheck.id}" not found`, "error");
 		return;
 	}
-	const field = await host.ui.select(`Edit ${providerId}`, [
+	const field = await host.ui.select(`Edit ${idCheck.id}`, [
 		"baseUrl",
 		"name",
 		"api",
@@ -417,7 +450,7 @@ export async function runModelsEditProvider(host: ModelsConfigHost, providerId: 
 		if (!v?.trim()) return;
 		next = { ...next, baseUrl: v.trim() };
 	} else if (field === "name") {
-		const v = await host.ui.input("Display name", provider.name ?? providerId);
+		const v = await host.ui.input("Display name", provider.name ?? idCheck.id);
 		if (!v?.trim()) return;
 		next = { ...next, name: v.trim() };
 	} else if (field === "api") {
@@ -430,13 +463,23 @@ export async function runModelsEditProvider(host: ModelsConfigHost, providerId: 
 		next = { ...next, apiKey: v };
 	}
 
-	const mutation = upsertProvider(content, providerId, next, { replace: true });
+	const mutation = upsertProvider(content, idCheck.id, next, { replace: true });
 	if (!(await showPreviewAndSave(host, mutation))) return;
 	const saved = await saveAndReload(host, mutation);
 	host.ui.notify(saved.ok ? saved.summary : saved.error, saved.ok ? "info" : "error");
 }
 
 export async function runModelsEditModel(host: ModelsConfigHost, providerId: string, modelId: string): Promise<void> {
+	const providerCheck = validateProviderId(providerId);
+	if (!providerCheck.ok) {
+		host.ui.notify(providerCheck.error, "error");
+		return;
+	}
+	const modelCheck = validateModelId(modelId);
+	if (!modelCheck.ok) {
+		host.ui.notify(modelCheck.error, "error");
+		return;
+	}
 	const { content } = await loadContent(host);
 	const name = await host.ui.input("New display name (optional, empty skips)", "");
 	const patch: Partial<ModelsJsonModel> = {};
@@ -444,7 +487,7 @@ export async function runModelsEditModel(host: ModelsConfigHost, providerId: str
 	const reasoning = await host.ui.select("Reasoning?", ["Keep", "Yes", "No"]);
 	if (reasoning === "Yes") patch.reasoning = true;
 	if (reasoning === "No") patch.reasoning = false;
-	const mutation = updateModelInProvider(content, providerId, modelId, patch);
+	const mutation = updateModelInProvider(content, providerCheck.id, modelCheck.id, patch);
 	if (!(await showPreviewAndSave(host, mutation))) return;
 	const saved = await saveAndReload(host, mutation);
 	host.ui.notify(saved.ok ? saved.summary : saved.error, saved.ok ? "info" : "error");

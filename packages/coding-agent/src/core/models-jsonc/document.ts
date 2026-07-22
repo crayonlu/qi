@@ -3,7 +3,7 @@
  * Never rewrite the whole file with JSON.stringify.
  */
 
-import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { applyEdits, modify, parse as parseJsonc } from "jsonc-parser";
 import {
@@ -216,6 +216,7 @@ export function removeModelFromProvider(
 
 /**
  * Validate proposed content, write via temp file + atomic rename.
+ * Temp file uses mode 0o600 (models.json may hold literal credentials).
  * Caller must reload ModelRegistry after success.
  */
 export async function atomicWriteModelsJsonc(
@@ -229,12 +230,12 @@ export async function atomicWriteModelsJsonc(
 	await mkdir(dir, { recursive: true });
 	const tmp = join(dir, `.models.json.${process.pid}.${Date.now()}.tmp`);
 	try {
-		await writeFile(tmp, content, "utf-8");
+		await writeFile(tmp, content, { encoding: "utf-8", mode: 0o600 });
 		await rename(tmp, path);
 		return { ok: true };
 	} catch (error) {
 		try {
-			await writeFile(tmp, ""); // best-effort cleanup ignored
+			await rm(tmp, { force: true });
 		} catch {
 			/* ignore */
 		}
