@@ -5,7 +5,14 @@ import { registerQiWorkflowCommands } from "./commands/register.ts";
 import { workflowController } from "./controller.ts";
 import { GOAL_INSTRUCTIONS } from "./prompts/goal.ts";
 import { PLAN_INSTRUCTIONS } from "./prompts/plan.ts";
-import { attachGoalContinuation, checkpointFiles, jobManager, MUTATING_TOOLS, mcpManager } from "./runtime/index.ts";
+import {
+	attachGoalContinuation,
+	checkpointFiles,
+	jobManager,
+	MUTATING_TOOLS,
+	mcpManager,
+	registerBtwLifecycleHooks,
+} from "./runtime/index.ts";
 import { registerQiWorkflowTools } from "./tools/register.ts";
 import { subscribeQiUi } from "./ui/index.ts";
 
@@ -19,6 +26,7 @@ export default function qiWorkflowExtension(pi: ExtensionAPI): void {
 	registerQiWorkflowTools(pi);
 	registerSubagentTools(pi);
 	attachGoalContinuation(pi);
+	registerBtwLifecycleHooks(pi);
 	mcpManager.registerProxyTool(pi);
 
 	let unsubscribeUi: (() => void) | undefined;

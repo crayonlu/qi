@@ -22,7 +22,7 @@ adopted code under `vendor/LICENSE.*.md`.
 | Subagents | `pi-subagents` | execution/runner/transports/stateful tool registration | Copyright (c) 2026 narumiruna |
 | Todo | `rpiv-todo` | state reducer/store/task-graph + tool envelope | Copyright (c) 2026 juicesharp |
 | Ask | `rpiv-ask-user-question` | validate-questionnaire + row-intent/types | Copyright (c) 2026 juicesharp |
-| /btw | `pi-btw` / `rpiv-btw` | implementation not retained as files; Qi branch-clone runtime | juicesharp / narumiruna (LICENSE retained) |
+| /btw | `rpiv-btw` | runtime in `runtime/btw-side-turn.ts` (history/snapshot/stopReason); Qi owns UI | Copyright (c) 2026 juicesharp |
 
 ## Intentionally excluded / pruned
 
@@ -32,6 +32,7 @@ adopted code under `vendor/LICENSE.*.md`.
 - Plan-mode tool-policy / bash lockdown
 - MCP package panels, ui-server/ui-session, app-bridge, proxy-modes/direct-tools (not wired through Qi MCP manager)
 - Subagent package config UI (Qi owns configuration UX)
+- rpiv-btw UI overlay files (Qi owns /btw UI); mature runtime lives in `runtime/btw-side-turn.ts`
 - Optional peers: `@juicesharp/rpiv-i18n`, `@mcp-ui/ext-apps`, `recheck`
 
 ## Runtime dependency rationale

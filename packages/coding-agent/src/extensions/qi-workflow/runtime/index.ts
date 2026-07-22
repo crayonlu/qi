@@ -2,6 +2,8 @@ export {
 	type AttachBtwSummaryOptions,
 	attachBtwSummary,
 	type BtwSideTurnOptions,
+	clearBtwHistory,
+	registerBtwLifecycleHooks,
 	runBtwSideTurn,
 } from "./btw-side-turn.ts";
 export {

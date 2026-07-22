@@ -174,13 +174,18 @@ export function cancelQuestion(state: QiWorkflowState): TransitionResult<Structu
 	return ok({ ...state, question, btw }, question);
 }
 
-export function startBtw(state: QiWorkflowState, question: string): TransitionResult<BtwDraft> {
+export function startBtw(
+	state: QiWorkflowState,
+	question: string,
+	priorHistory?: Array<{ role: "user" | "assistant"; text: string }>,
+): TransitionResult<BtwDraft> {
 	if (state.question?.status === "open") return fail(state, "Structured question has priority over /btw");
 	const trimmed = question.trim();
 	if (!trimmed) return fail(state, "btw question is required");
+	const history = priorHistory && priorHistory.length > 0 ? priorHistory : [{ role: "user" as const, text: trimmed }];
 	const btw: BtwDraft = {
 		question: trimmed,
-		history: [{ role: "user", text: trimmed }],
+		history,
 		hiddenByQuestion: false,
 	};
 	return ok({ ...state, btw }, btw);

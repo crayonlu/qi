@@ -1,9 +1,10 @@
 import type { Component, TUI } from "@earendil-works/pi-tui";
 import { matchesKey, truncateToWidth, wrapTextWithAnsi } from "@earendil-works/pi-tui";
-import type { ExtensionUIContext } from "../../../core/extensions/types.ts";
+import type { ExtensionContext, ExtensionUIContext } from "../../../core/extensions/types.ts";
 import type { Theme } from "../../../modes/interactive/theme/theme.ts";
 import type { WorkflowController } from "../controller.ts";
 import { type BtwDraft, clearBtw } from "../domain/index.ts";
+import { clearBtwHistory } from "../runtime/btw-side-turn.ts";
 
 const OVERLAY_OPTIONS = {
 	anchor: "bottom-center" as const,
@@ -19,15 +20,23 @@ class BtwOverlay implements Component {
 	private theme: Theme;
 	private controller: WorkflowController;
 	private done: (result: BtwCloseResult) => void;
+	private sessionCtx?: ExtensionContext;
 	private scrollOffset = 0;
 	private cachedWidth?: number;
 	private cachedLines?: string[];
 
-	constructor(tui: TUI, theme: Theme, controller: WorkflowController, done: (result: BtwCloseResult) => void) {
+	constructor(
+		tui: TUI,
+		theme: Theme,
+		controller: WorkflowController,
+		done: (result: BtwCloseResult) => void,
+		sessionCtx?: ExtensionContext,
+	) {
 		this.tui = tui;
 		this.theme = theme;
 		this.controller = controller;
 		this.done = done;
+		this.sessionCtx = sessionCtx;
 	}
 
 	private draft(): BtwDraft | null {
@@ -55,7 +64,11 @@ class BtwOverlay implements Component {
 			return;
 		}
 		if (data === "x" || data === "X") {
-			this.controller.apply((state) => clearBtw(state));
+			if (this.sessionCtx) {
+				clearBtwHistory(this.sessionCtx);
+			} else {
+				this.controller.apply((state) => clearBtw(state));
+			}
 			this.done({});
 			return;
 		}
@@ -131,7 +144,10 @@ class BtwOverlay implements Component {
  * Show /btw overlay. If a structured question is open, does not show (question priority).
  * Draft is preserved when hiddenByQuestion — caller should re-open after question closes.
  */
-export async function showBtwOverlay(ctx: { ui: ExtensionUIContext }, controller: WorkflowController): Promise<void> {
+export async function showBtwOverlay(
+	ctx: { ui: ExtensionUIContext } & Partial<ExtensionContext>,
+	controller: WorkflowController,
+): Promise<void> {
 	const state = controller.getState();
 	if (state.question?.status === "open") {
 		ctx.ui.notify("Structured question has priority over /btw", "warning");
@@ -146,8 +162,10 @@ export async function showBtwOverlay(ctx: { ui: ExtensionUIContext }, controller
 		return;
 	}
 
+	const sessionCtx = "sessionManager" in ctx && ctx.sessionManager ? (ctx as ExtensionContext) : undefined;
+
 	const result = await ctx.ui.custom<BtwCloseResult>(
-		(tui, theme, _kb, done) => new BtwOverlay(tui, theme, controller, done),
+		(tui, theme, _kb, done) => new BtwOverlay(tui, theme, controller, done, sessionCtx),
 		{ overlay: true, overlayOptions: OVERLAY_OPTIONS },
 	);
 
