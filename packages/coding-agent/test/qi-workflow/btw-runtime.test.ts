@@ -78,7 +78,9 @@ describe("qi-workflow /btw runtime (rpiv-btw parity)", () => {
 	});
 
 	it("embeds mature system prompt and cross-session hint limit", () => {
-		expect(BTW_SYSTEM_PROMPT).toContain("NO tools available");
+		expect(BTW_SYSTEM_PROMPT).toContain("You have NO tools");
+		expect(BTW_SYSTEM_PROMPT).toContain("MAIN pi session");
+		expect(BTW_SYSTEM_PROMPT).toContain("Markdown");
 		expect(CROSS_SESSION_HINT_LIMIT).toBe(10);
 	});
 });
