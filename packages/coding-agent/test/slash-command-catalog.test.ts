@@ -53,6 +53,7 @@ describe("slash-command-catalog", () => {
 		expect(byName.plan?.category).toBe("start");
 		expect(byName.plan?.sourceKind).toBe("qi");
 		expect(byName.plan?.description).toContain("[Qi]");
+		// Explicit hidden on the extension command still wins
 		expect(byName.cleanup?.hidden).toBe(true);
 		expect(byName["weird-ext"]?.category).toBe("extensions");
 		expect(byName["weird-ext"]?.sourceKind).toBe("extension");
@@ -63,6 +64,24 @@ describe("slash-command-catalog", () => {
 		expect(byName["skill:deploy"]?.category).toBe("skills");
 		expect(byName.new?.category).toBe("session");
 		expect(SLASH_CATEGORIES.some((c) => c.id === "templates" && c.collapsed)).toBe(true);
+	});
+
+	test("qi rewind/cleanup/board are browsable session/work entries by default", () => {
+		const catalog = buildSlashCommandCatalog({
+			extensionCommands: [
+				{ name: "rewind", invocationName: "rewind", description: "Rewind" },
+				{ name: "cleanup", invocationName: "cleanup", description: "Cleanup" },
+				{ name: "board", invocationName: "board", description: "Board", category: "work" },
+			],
+		});
+		const byName = Object.fromEntries(catalog.map((cmd) => [cmd.name, cmd]));
+		expect(byName.rewind?.hidden).toBe(false);
+		expect(byName.rewind?.category).toBe("session");
+		expect(byName.cleanup?.hidden).toBe(false);
+		expect(byName.cleanup?.category).toBe("session");
+		expect(byName.board?.hidden).toBe(false);
+		expect(byName.board?.category).toBe("work");
+		expect(byName.board?.sourceKind).toBe("qi");
 	});
 
 	test("formatSourceBadge preserves existing text", () => {

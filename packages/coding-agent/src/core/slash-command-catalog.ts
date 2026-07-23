@@ -104,9 +104,9 @@ const QI_COMMAND_META: Record<
 	btw: { category: "work" },
 	mcp: { category: "integrations", priority: 50 },
 	llama: { category: "integrations" },
-	// Dev / advanced — callable but omitted from the browser
-	rewind: { category: "session", hidden: true },
-	cleanup: { category: "session", hidden: true },
+	board: { category: "work" },
+	rewind: { category: "session" },
+	cleanup: { category: "session" },
 };
 
 const SOURCE_BADGE: Record<SlashCommandSourceKind, string | undefined> = {
