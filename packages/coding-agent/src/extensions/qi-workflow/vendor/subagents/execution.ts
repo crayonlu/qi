@@ -20,6 +20,7 @@ import {
 	type SingleResult,
 	type SubagentDetails,
 } from "./runner.ts";
+import { formatModelRef, pickSubagentModel } from "./pick-model.ts";
 import { readSubagentSettings, resolveSubagentThinkingLevel } from "./settings.ts";
 
 const MAX_PARALLEL_TASKS = 8;
@@ -184,6 +185,16 @@ export async function executeSubagent(
 				}
 			}
 
+			// Same pool as /model: pick once per invocation (headless inherits session model).
+			const pickedModel = await pickSubagentModel(ctx);
+			if (!pickedModel) {
+				return {
+					content: [{ type: "text", text: "Canceled: no subagent model selected." }],
+					details: makeDetails(hasChain ? "chain" : hasTasks ? "parallel" : "single")([]),
+				};
+			}
+			const selectedModel = formatModelRef(pickedModel);
+
 			if (params.chain && params.chain.length > 0) {
 				const results: SingleResult[] = [];
 				let previousOutput = "";
@@ -225,6 +236,8 @@ export async function executeSubagent(
 							resolveTimeoutMs(step.agent, step.timeoutMs),
 							chainUpdate,
 							makeDetails("chain"),
+							undefined,
+							selectedModel,
 						);
 						results.push(result);
 
@@ -346,6 +359,8 @@ export async function executeSubagent(
 								}
 							},
 							makeDetails("parallel"),
+							undefined,
+							selectedModel,
 						);
 						allResults[index] = result;
 						doneCount += 1;
@@ -399,6 +414,8 @@ export async function executeSubagent(
 								}
 							},
 							makeDetails("parallel"),
+							undefined,
+							selectedModel,
 						);
 					}
 
@@ -454,6 +471,8 @@ export async function executeSubagent(
 						resolveTimeoutMs(params.agent, params.timeoutMs),
 						onUpdate,
 						makeDetails("single"),
+						undefined,
+						selectedModel,
 					);
 					const isError = isResultError(result);
 					if (isError) {

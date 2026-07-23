@@ -379,6 +379,8 @@ export async function runSingleAgent(
 	onUpdate: OnUpdateCallback | undefined,
 	makeDetails: (results: SingleResult[]) => SubagentDetails,
 	invocationOverride?: { command: string; argsPrefix?: string[] },
+	/** Selected at invocation time from available models (/model pool); not from agent files. */
+	selectedModel?: string,
 ): Promise<SingleResult> {
 	const agent = agents.find((a) => a.name === agentName);
 
@@ -428,7 +430,7 @@ export async function runSingleAgent(
 			contextTokens: 0,
 			turns: 0,
 		},
-		model: agent.model ?? undefined,
+		model: selectedModel,
 		thinkingLevel,
 		step,
 		timeoutMs,
@@ -483,7 +485,7 @@ export async function runSingleAgent(
 		}
 
 		const args = buildPiArgs({
-			model: agent.model,
+			model: selectedModel,
 			thinkingLevel,
 			tools: agent.tools,
 			systemPromptPath: tmpPromptPath ?? undefined,
@@ -681,7 +683,7 @@ export async function runSingleAgent(
 			inherited: ["environment"],
 			overridden: [
 				"cwd",
-				...(agent.model ? ["model"] : []),
+				...(selectedModel ? ["model"] : []),
 				...(thinkingLevel ? ["thinkingLevel"] : []),
 				...(agent.tools ? ["tools"] : []),
 			],

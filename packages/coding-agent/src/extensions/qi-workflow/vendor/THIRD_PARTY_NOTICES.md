@@ -48,6 +48,7 @@ adopted code under `vendor/LICENSE.*.md`.
 - **MCP setup wizard, browser ui-server/app-bridge/glimpse, per-tool direct-toggle editor** — Qi `/mcp` panel with filter/auth/enable/disable/reconnect/inspect + empty config hints
 - **Process `/ps` log dock / pin / live stream widget** — Qi `/jobs` dashboard: logs/cancel/clear-finished; agent uses `process` tool for stdin/wait
 - **Subagent fleet overlay / Ctrl+Alt+F / watchdog slash surface** — Qi Task/Workflow dashboard + `subagent` tools
+- **Subagent file/settings `model` hard-bind** — ignored; pick from available models (same pool as `/model`) at invocation, headless inherits parent session model
 - **rpiv-btw banner/theme files** — Qi `/btw` bottom overlay with live pending + Esc abort
 
 ## Runtime dependency rationale

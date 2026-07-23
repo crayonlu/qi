@@ -12,7 +12,6 @@ import {
 import {
 	type AgentConfig,
 	discoverAgents,
-	isThinkingLevel,
 	type SubagentThinkingLevel,
 } from "./agents.ts";
 import { redactPrivateText } from "./context.ts";
@@ -152,21 +151,21 @@ export class InProcessTransport implements SubagentTransport {
 						exitCode: 1,
 						truncated,
 						error: final.error || "In-process subagent returned an error",
-						policy: inProcessPolicy(agentConfig),
+						policy: inProcessPolicy(agentConfig, agent.model),
 					};
 				}
 				if (final.stopReason === "aborted") {
 					return {
 						...interruptedOutcome(output.text),
 						truncated,
-						policy: inProcessPolicy(agentConfig),
+						policy: inProcessPolicy(agentConfig, agent.model),
 					};
 				}
 				return {
 					output: output.text,
 					exitCode: 0,
 					truncated,
-					policy: inProcessPolicy(agentConfig),
+					policy: inProcessPolicy(agentConfig, agent.model),
 				};
 			case "failed":
 				return {
@@ -174,7 +173,7 @@ export class InProcessTransport implements SubagentTransport {
 					exitCode: 1,
 					truncated,
 					error: errorMessage(settlement.error),
-					policy: inProcessPolicy(agentConfig),
+					policy: inProcessPolicy(agentConfig, agent.model),
 				};
 			case "timeout":
 				return {
@@ -182,13 +181,13 @@ export class InProcessTransport implements SubagentTransport {
 					exitCode: 124,
 					truncated,
 					error: `In-process subagent timed out after ${timeoutMs}ms`,
-					policy: inProcessPolicy(agentConfig),
+					policy: inProcessPolicy(agentConfig, agent.model),
 				};
 			case "aborted":
 				return {
 					...interruptedOutcome(output.text),
 					truncated,
-					policy: inProcessPolicy(agentConfig),
+					policy: inProcessPolicy(agentConfig, agent.model),
 				};
 		}
 	}
@@ -439,69 +438,37 @@ export async function resolveChildModel(options: ChildSessionCreateOptions): Pro
 	model: Model<Api>;
 	thinkingLevel: SubagentThinkingLevel;
 }> {
+	// Never read agent markdown/settings model. Prefer spawn-time selection, else parent session.
 	let model = options.parentRuntime.model;
-	let modelThinkingLevel: SubagentThinkingLevel | undefined;
-	if (options.agentConfig.model) {
-		const parsed = parseModelRequest(options.agentConfig.model);
-		model = resolveConfiguredModel(parsed.model, options.modelRegistry);
-		modelThinkingLevel = parsed.thinkingLevel;
+	if (options.agent.model) {
+		model = resolveConfiguredModel(options.agent.model, options.modelRegistry);
 	}
 	if (!model) model = options.modelRegistry.getAvailable()[0];
 	if (!model)
 		throw new Error("No model with configured authentication is available for in-process subagent");
 	return {
 		model,
-		thinkingLevel:
-			options.agentConfig.thinkingLevel ??
-			modelThinkingLevel ??
-			options.parentRuntime.thinkingLevel,
+		thinkingLevel: options.agentConfig.thinkingLevel ?? options.parentRuntime.thinkingLevel,
 	};
-}
-
-function parseModelRequest(value: string): {
-	model: string;
-	thinkingLevel?: SubagentThinkingLevel;
-} {
-	const requested = value.trim();
-	const separator = requested.lastIndexOf(":");
-	if (separator > 0) {
-		const suffix = requested.slice(separator + 1);
-		if (isThinkingLevel(suffix)) {
-			return { model: requested.slice(0, separator), thinkingLevel: suffix };
-		}
-	}
-	return { model: requested };
 }
 
 function resolveConfiguredModel(value: string, modelRegistry: ModelRegistry): Model<Api> {
 	const requested = value.trim();
 	if (!requested) throw new Error("In-process subagent model cannot be empty");
 	const slash = requested.indexOf("/");
-	if (slash > 0) {
-		const exact = modelRegistry.find(requested.slice(0, slash), requested.slice(slash + 1));
-		if (exact) return exact;
+	if (slash <= 0 || slash === requested.length - 1) {
+		throw new Error(`Invalid subagent model "${requested}". Expected provider/id.`);
 	}
-	const lowered = requested.toLowerCase();
-	const exactMatches = modelRegistry
-		.getAll()
-		.filter((model) => model.id.toLowerCase() === lowered || model.name.toLowerCase() === lowered);
-	if (exactMatches.length === 1) return exactMatches[0];
-	const partialMatches = modelRegistry
-		.getAll()
-		.filter(
-			(model) =>
-				model.id.toLowerCase().includes(lowered) || model.name.toLowerCase().includes(lowered),
-		);
-	if (partialMatches.length === 1) return partialMatches[0];
-	const displayedMatches = partialMatches
-		.slice(0, 8)
-		.map((model) => `${model.provider}/${model.id}`);
-	const remaining = partialMatches.length - displayedMatches.length;
-	const suffix =
-		displayedMatches.length > 0
-			? `; matches: ${displayedMatches.join(", ")}${remaining > 0 ? `, and ${remaining} more` : ""}`
-			: "";
-	throw new Error(`Unable to resolve in-process subagent model ${requested}${suffix}`);
+	const provider = requested.slice(0, slash);
+	const id = requested.slice(slash + 1);
+	const exact = modelRegistry.find(provider, id);
+	if (exact) return exact;
+	const available = modelRegistry.getAvailable();
+	const found = available.find((candidate) => candidate.provider === provider && candidate.id === id);
+	if (found) return found;
+	throw new Error(
+		`Subagent model "${requested}" is not in the available model pool (same as /model).`,
+	);
 }
 
 export async function createInProcessResourceLoader(
@@ -626,11 +593,11 @@ function interruptedOutcome(output: string): TurnOutcome {
 	return { output, exitCode: 130, aborted: true, error: "In-process subagent was aborted" };
 }
 
-function inProcessPolicy(agent: AgentConfig): NonNullable<TurnOutcome["policy"]> {
+function inProcessPolicy(agent: AgentConfig, selectedModel?: string): NonNullable<TurnOutcome["policy"]> {
 	return {
 		inherited: ["modelRegistry", "authentication", "cwdResources"],
 		overridden: [
-			...(agent.model ? ["model"] : []),
+			...(selectedModel ? ["model"] : []),
 			...(agent.thinkingLevel ? ["thinkingLevel"] : []),
 			...(agent.tools ? ["tools"] : []),
 		],

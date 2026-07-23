@@ -47,6 +47,8 @@ export interface ManagedAgent {
 	updatedAt: number;
 	cwd: string;
 	agentScope?: "user" | "project" | "both";
+	/** provider/id selected at spawn from available models; not from agent markdown. */
+	model?: string;
 	currentTask?: string;
 	history: AgentTurn[];
 	error?: string;
@@ -218,6 +220,7 @@ export class AgentRegistry {
 		context?: string;
 		contextSourceIds?: string[];
 		contextTruncated?: boolean;
+		model?: string;
 	}): Promise<ManagedAgent> {
 		if (!input.task.trim()) throw new Error("Subagent tasks cannot be empty");
 		const task = truncateUtf8(input.task, this.maxTaskBytes).text;
@@ -254,6 +257,7 @@ export class AgentRegistry {
 			updatedAt: now,
 			cwd: input.cwd,
 			agentScope: input.agentScope,
+			model: input.model,
 			currentTask: task,
 			history: [],
 			mailbox: [],

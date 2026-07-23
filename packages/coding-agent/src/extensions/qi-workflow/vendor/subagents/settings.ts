@@ -47,12 +47,6 @@ export function normalizeAgentSettings(value: unknown): SubagentAgentConfig | un
 		hasKnownField = true;
 	}
 
-	if (hasOwn(value, "model")) {
-		if (value.model !== null && typeof value.model !== "string") return undefined;
-		config.model = value.model;
-		hasKnownField = true;
-	}
-
 	if (hasOwn(value, "thinkingLevel")) {
 		if (value.thinkingLevel !== null && !isThinkingLevel(value.thinkingLevel)) return undefined;
 		config.thinkingLevel = value.thinkingLevel;
@@ -292,10 +286,5 @@ export function resolveSubagentThinkingLevel(
 }
 
 export function hasAnyAgentOverride(config: SubagentAgentConfig): boolean {
-	return (
-		hasOwn(config, "tools") ||
-		hasOwn(config, "model") ||
-		hasOwn(config, "thinkingLevel") ||
-		hasOwn(config, "timeoutMs")
-	);
+	return hasOwn(config, "tools") || hasOwn(config, "thinkingLevel") || hasOwn(config, "timeoutMs");
 }

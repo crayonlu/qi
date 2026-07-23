@@ -1,6 +1,7 @@
 // @ts-nocheck
 import type { ExtensionContext } from "../pi-coding-agent-shim.ts";
 import { discoverAgents } from "./agents.ts";
+import { formatModelRef } from "./pick-model.ts";
 import type { ManagedAgent, TurnOutcome } from "./registry.ts";
 import { getResultFinalOutput, runSingleAgent, type SubagentDetails } from "./runner.ts";
 import { readSubagentSettings, resolveSubagentThinkingLevel } from "./settings.ts";
@@ -13,7 +14,7 @@ import type { SubagentTransport } from "./transport.ts";
 export class SubprocessTransport implements SubagentTransport {
 	readonly kind = "subprocess" as const;
 
-	constructor(_ctx: ExtensionContext) {}
+	constructor(private readonly ctx: ExtensionContext) {}
 
 	async runTurn(record: ManagedAgent, task: string, signal: AbortSignal): Promise<TurnOutcome> {
 		const settings = readSubagentSettings();
@@ -26,6 +27,7 @@ export class SubprocessTransport implements SubagentTransport {
 			projectAgentsDir: discovery.projectAgentsDir,
 			results,
 		});
+		const selectedModel = record.model ?? formatModelRef(this.ctx.model);
 		const single = await runSingleAgent(
 			record.cwd,
 			discovery.agents,
@@ -38,6 +40,8 @@ export class SubprocessTransport implements SubagentTransport {
 			resolveStatefulTurnTimeout(agent),
 			undefined,
 			makeDetails,
+			undefined,
+			selectedModel,
 		);
 		return {
 			output: getResultFinalOutput(single),

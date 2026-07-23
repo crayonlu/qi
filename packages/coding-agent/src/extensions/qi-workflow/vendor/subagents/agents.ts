@@ -31,7 +31,6 @@ export interface AgentConfig {
 	name: string;
 	description: string;
 	tools?: string[];
-	model?: string;
 	thinkingLevel?: SubagentThinkingLevel;
 	timeoutMs?: number;
 	systemPrompt: string;
@@ -41,7 +40,6 @@ export interface AgentConfig {
 
 export interface SubagentAgentConfig {
 	tools?: string[];
-	model?: string | null;
 	thinkingLevel?: SubagentThinkingLevel | null;
 	timeoutMs?: number | null;
 }
@@ -181,7 +179,6 @@ function loadAgentsFromDir(dir: string, source: "user" | "project"): AgentConfig
 			name: frontmatter.name,
 			description: frontmatter.description,
 			tools: tools && tools.length > 0 ? tools : undefined,
-			model: frontmatter.model,
 			thinkingLevel: isThinkingLevel(frontmatter.thinkingLevel) ? frontmatter.thinkingLevel : undefined,
 			systemPrompt: body,
 			source,
@@ -251,9 +248,6 @@ export function discoverAgents(
 
 		const nextAgent: AgentConfig = { ...agent };
 		if (hasOwn(override, "tools")) nextAgent.tools = override.tools;
-		if (hasOwn(override, "model")) {
-			nextAgent.model = override.model === null ? undefined : override.model;
-		}
 		if (hasOwn(override, "thinkingLevel")) {
 			nextAgent.thinkingLevel = override.thinkingLevel === null ? undefined : override.thinkingLevel;
 		}

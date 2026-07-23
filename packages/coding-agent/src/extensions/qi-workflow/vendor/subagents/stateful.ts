@@ -7,6 +7,7 @@ import { Type } from "typebox";
 import { discoverAgents, type AgentScope, isThinkingLevel } from "./agents.ts";
 import { buildContextSnapshot, type ContextMode, redactPrivateText } from "./context.ts";
 import { assertSubagentDepthAllowed } from "./execution.ts";
+import { formatModelRef, pickSubagentModel } from "./pick-model.ts";
 import { DEFAULT_MAX_CONTEXT_BYTES, truncateUtf8 } from "./limits.ts";
 import {
 	ORCHESTRATION_MARKER_PREFIX,
@@ -261,6 +262,14 @@ export function registerStatefulSubagents(
 			if (params.workspaceMode === "worktree" && resolvedAgent?.source === "project") {
 				throw new Error("Project-local subagent definitions cannot run in a detached worktree");
 			}
+			const pickedModel = await pickSubagentModel(ctx);
+			if (!pickedModel) {
+				return {
+					content: [{ type: "text", text: "Canceled: no subagent model selected." }],
+					details: {},
+				};
+			}
+			const selectedModel = formatModelRef(pickedModel);
 			const mode = resolveSpawnContextMode(params.context, params.contextEntryIds);
 			const snapshot = buildContextSnapshot(
 				ctx.sessionManager.getBranch(),
@@ -293,6 +302,7 @@ export function registerStatefulSubagents(
 					context: snapshot.text || undefined,
 					contextSourceIds: snapshot.sourceIds,
 					contextTruncated: snapshot.truncated,
+					model: selectedModel,
 				});
 			} catch (error) {
 				if (workspace) await workspaceManager.cleanup(workspaceOwner);
