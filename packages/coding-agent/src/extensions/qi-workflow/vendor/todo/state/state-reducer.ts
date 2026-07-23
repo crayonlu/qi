@@ -15,7 +15,7 @@ import { detectCycle } from "./task-graph.ts";
  */
 export type Op =
 	| { kind: "create"; taskId: number }
-	| { kind: "update"; id: number; fromStatus: TaskStatus; toStatus: TaskStatus; changed: boolean }
+	| { kind: "update"; id: number; subject: string; fromStatus: TaskStatus; toStatus: TaskStatus; changed: boolean }
 	| { kind: "delete"; id: number; subject: string }
 	| { kind: "list"; statusFilter?: TaskStatus; includeDeleted: boolean }
 	| { kind: "get"; task: Task }
@@ -177,6 +177,7 @@ export function applyTaskMutation(state: TaskState, action: TaskAction, params: 
 				op: {
 					kind: "update",
 					id: updated.id,
+					subject: updated.subject,
 					fromStatus: current.status,
 					toStatus: newStatus,
 					changed: taskChanged(current, updated),
