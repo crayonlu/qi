@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { workflowController } from "../../src/extensions/qi-workflow/controller.ts";
 import { createEmptyState, setGoal } from "../../src/extensions/qi-workflow/domain/index.ts";
 import qiWorkflowExtension from "../../src/extensions/qi-workflow/index.ts";
-import { createHarness, type Harness } from "../suite/harness.ts";
+import { createHarness, getAssistantTexts, type Harness } from "../suite/harness.ts";
 
 describe("qi-workflow faux provider flows", () => {
 	let harness: Harness | undefined;
@@ -75,6 +75,8 @@ describe("qi-workflow faux provider flows", () => {
 
 		// Mature pi-goal clears activeGoal after successful completion.
 		expect(workflowController.getState().goal).toBeNull();
+		// Successful goal_complete must not terminate the turn — a wrap-up assistant reply is required.
+		expect(getAssistantTexts(harness)).toContain("Goal completed with evidence.");
 	});
 
 	it("does not complete a goal from ordinary assistant prose", async () => {

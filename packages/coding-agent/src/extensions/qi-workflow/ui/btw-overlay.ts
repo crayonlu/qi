@@ -7,7 +7,7 @@ import type { WorkflowController } from "../controller.ts";
 import { type BtwDraft, clearBtw } from "../domain/index.ts";
 import { clearBtwHistory } from "../runtime/btw-side-turn.ts";
 import { hintLine, renderBanner, sidePadStr } from "./chrome.ts";
-import { BOTTOM_OVERLAY } from "./layout.ts";
+import { BOTTOM_OVERLAY, panelMaxHeight, tuiRows } from "./layout.ts";
 
 type BtwCloseResult = { attachSummary?: string };
 
@@ -177,8 +177,7 @@ class BtwOverlay implements Component {
 			natural.push(hintLine(th, hints, w));
 		}
 
-		const rows = (this.tui as TUI & { terminal?: { rows?: number } }).terminal?.rows ?? 24;
-		const maxRows = Math.max(4, Math.floor(rows * 0.85));
+		const maxRows = panelMaxHeight(tuiRows(this.tui), "sheet");
 		let view = natural;
 		if (natural.length > maxRows) {
 			const excess = natural.length - maxRows;

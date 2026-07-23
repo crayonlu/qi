@@ -19,7 +19,6 @@ import {
 } from "./runner.ts";
 import { ICONS, spinFrame, withIcon } from "../../ui/status-icons.ts";
 
-const COLLAPSED_ITEM_COUNT = 10;
 const TREE_BRANCH = ICONS.treeBranch;
 const TREE_LAST = ICONS.treeLast;
 
@@ -31,6 +30,25 @@ function resultIcon(theme: Theme, opts: { error?: boolean; running?: boolean; ti
 
 function treePrefix(isLast: boolean, theme: Theme): string {
 	return theme.fg("dim", isLast ? `${TREE_LAST} ` : `${TREE_BRANCH} `);
+}
+
+/** Vertical rail under ├─/└─ so multiline tool bodies do not break the tree. */
+function treeRail(theme: Theme): string {
+	return theme.fg("dim", "│  ");
+}
+
+/** Prefix every line of a block with tree chrome (first = ├─/└─, rest = │). */
+function treeBlock(theme: Theme, isLast: boolean, body: string): string {
+	const lines = body.split("\n");
+	const head = treePrefix(isLast, theme);
+	const rail = treeRail(theme);
+	return lines.map((line, i) => `${i === 0 ? head : rail}${line}`).join("\n");
+}
+
+function flattenOneLine(text: string, max = 60): string {
+	const one = text.replace(/\s+/g, " ").trim();
+	if (!one) return "...";
+	return one.length > max ? `${one.slice(0, max)}...` : one;
 }
 
 function formatDoneStats(
@@ -108,8 +126,7 @@ function formatToolCall(
 	switch (toolName) {
 		case "bash": {
 			const command = (args.command as string) || "...";
-			const preview = command.length > 60 ? `${command.slice(0, 60)}...` : command;
-			return themeFg("muted", "$ ") + themeFg("toolOutput", preview);
+			return themeFg("muted", "$ ") + themeFg("toolOutput", flattenOneLine(command));
 		}
 		case "read": {
 			const rawPath = (args.file_path || args.path || "...") as string;
@@ -198,6 +215,41 @@ function getCollapsedDisplayItems(result: SingleResult): { items: DisplayItem[];
 	return { items, total: items.length };
 }
 
+/** One-line scannable preview for collapsed agent cards (no multi-paragraph dumps). */
+export function agentActivityPreview(result: SingleResult, max = 64): string {
+	const final = getResultFinalOutput(result).trim();
+	if (final) {
+		const first = final
+			.split("\n")
+			.map((l) => l.replace(/^#+\s*/, "").trim())
+			.find(Boolean);
+		return flattenOneLine(first ?? final, max);
+	}
+	if (isResultError(result) && result.errorMessage) {
+		return flattenOneLine(result.errorMessage, max);
+	}
+	const { items } = getCollapsedDisplayItems(result);
+	const last = items[items.length - 1];
+	if (!last) return flattenOneLine(result.task || "(no output)", max);
+	if (last.type === "text") return flattenOneLine(last.text, max);
+	if (last.name === "bash") {
+		const cmd = flattenOneLine(String((last.args as { command?: string }).command ?? ""), Math.max(24, max - 2));
+		return `$ ${cmd}`;
+	}
+	return flattenOneLine(last.name, max);
+}
+
+function agentSummaryRow(
+	theme: Theme,
+	result: SingleResult,
+	opts: { icon: string; label?: string; isLast: boolean },
+): string {
+	const label = opts.label ?? result.agent;
+	const preview = agentActivityPreview(result);
+	const body = `${opts.icon} ${theme.fg("accent", label)}${theme.fg("dim", ` · ${preview}`)}`;
+	return treeBlock(theme, opts.isLast, body);
+}
+
 export function renderSubagentCall(args: SubagentParams, theme: Theme) {
 	const scope: AgentScope = args.agentScope ?? "user";
 	if (args.chain && args.chain.length > 0) {
@@ -264,6 +316,7 @@ export function renderSubagentResult(
 	result: AgentToolResult<SubagentDetails>,
 	{ expanded, isPartial }: ToolRenderResultOptions,
 	theme: Theme,
+	tick = 0,
 ) {
 	const details = result.details as SubagentDetails | undefined;
 	if (!details || details.results.length === 0) {
@@ -271,7 +324,7 @@ export function renderSubagentResult(
 		const body = text?.type === "text" ? text.text : "(no output)";
 		if (isPartial) {
 			return new Text(
-				withIcon(theme.fg("warning", spinFrame(0)), theme.fg("muted", body || "Working…")),
+				withIcon(theme.fg("warning", spinFrame(tick)), theme.fg("muted", body || "Working…")),
 				0,
 				0,
 			);
@@ -281,29 +334,10 @@ export function renderSubagentResult(
 
 	const mdTheme = getMarkdownTheme();
 
-	const renderDisplayItems = (items: DisplayItem[], limit?: number, total = items.length) => {
-		const toShow = limit ? items.slice(-limit) : items;
-		const skipped = Math.max(0, total - toShow.length);
-		let text = "";
-		if (skipped > 0) text += theme.fg("muted", `... ${skipped} earlier items\n`);
-		for (let i = 0; i < toShow.length; i++) {
-			const item = toShow[i]!;
-			const last = i === toShow.length - 1;
-			const prefix = treePrefix(last, theme);
-			if (item.type === "text") {
-				const preview = expanded ? item.text : item.text.split("\n").slice(0, 3).join("\n");
-				text += `${prefix}${theme.fg("toolOutput", preview)}\n`;
-			} else {
-				text += `${prefix}${formatToolCall(item.name, item.args, theme.fg.bind(theme))}\n`;
-			}
-		}
-		return text.trimEnd();
-	};
-
 	if (details.mode === "single" && details.results.length === 1) {
 		const r = details.results[0];
 		const isError = isResultError(r);
-		const icon = resultIcon(theme, { error: isError, running: isPartial && !isError });
+		const icon = resultIcon(theme, { error: isError, running: isPartial && !isError, tick });
 		const displayItems = getDisplayItems(r.messages);
 		const toolCount = displayItems.filter((i) => i.type === "toolCall").length;
 		const finalOutput = getResultFinalOutput(r);
@@ -328,8 +362,11 @@ export function renderSubagentResult(
 					if (item.type === "toolCall")
 						container.addChild(
 							new Text(
-								treePrefix(i === displayItems.length - 1 && !finalOutput, theme) +
+								treeBlock(
+									theme,
+									i === displayItems.length - 1 && !finalOutput,
 									formatToolCall(item.name, item.args, theme.fg.bind(theme)),
+								),
 								0,
 								0,
 							),
@@ -350,25 +387,36 @@ export function renderSubagentResult(
 		}
 
 		const collapsed = getCollapsedDisplayItems(r);
-		let text = withIcon(
+		const container = new Container();
+		let header = withIcon(
 			icon,
 			theme.fg("toolTitle", theme.bold(r.agent)) + theme.fg("muted", ` (${r.agentSource})`),
 		);
-		if (isError && r.stopReason) text += ` ${theme.fg("error", `[${r.stopReason}]`)}`;
-		if (isError && r.errorMessage) text += `\n${theme.fg("error", `Error: ${r.errorMessage}`)}`;
-		if (collapsed.items.length > 0) {
-			text += `\n${renderDisplayItems(collapsed.items, COLLAPSED_ITEM_COUNT, collapsed.total)}`;
-			if (collapsed.total > COLLAPSED_ITEM_COUNT)
-				text += `\n${theme.fg("muted", "(Ctrl+O to expand)")}`;
+		if (isError && r.stopReason) header += ` ${theme.fg("error", `[${r.stopReason}]`)}`;
+		container.addChild(new Text(header, 0, 0));
+		if (isError && r.errorMessage) {
+			container.addChild(new Text(theme.fg("error", `Error: ${r.errorMessage}`), 0, 0));
+		}
+		if (isPartial && !isError) {
+			container.addChild(
+				new Text(treeBlock(theme, true, theme.fg("dim", agentActivityPreview(r))), 0, 0),
+			);
 		} else if (finalOutput.trim()) {
-			text += `\n${treePrefix(true, theme)}${theme.fg("toolOutput", finalOutput.trim().split("\n").slice(0, 3).join("\n"))}`;
-		} else if (!isError || !r.errorMessage) {
-			text += `\n${theme.fg("muted", isPartial && !isError ? "(running...)" : "(no output)")}`;
+			container.addChild(
+				new Text(treeBlock(theme, true, theme.fg("dim", agentActivityPreview(r))), 0, 0),
+			);
+		} else if (collapsed.items.length > 0) {
+			container.addChild(
+				new Text(treeBlock(theme, true, theme.fg("dim", agentActivityPreview(r))), 0, 0),
+			);
+		} else {
+			container.addChild(new Text(theme.fg("muted", "(no output)"), 0, 0));
 		}
 		const usageStr = formatResultUsageStats(r);
 		const stats = formatDoneStats(theme, { tools: toolCount, usage: usageStr, partial: isPartial });
-		if (stats) text += `\n${stats}`;
-		return new Text(text, 0, 0);
+		if (stats) container.addChild(new Text(stats, 0, 0));
+		if (!isPartial) container.addChild(new Text(theme.fg("muted", "(Ctrl+O to expand)"), 0, 0));
+		return container;
 	}
 
 	const aggregateUsage = (results: SingleResult[]) => {
@@ -392,7 +440,7 @@ export function renderSubagentResult(
 			(result) => !isResultError(result) && (!currentIsRunning || result !== currentResult),
 		).length;
 		const icon = currentIsRunning
-			? theme.fg("warning", spinFrame(0))
+			? theme.fg("warning", spinFrame(tick))
 			: successCount === details.results.length
 				? theme.fg("success", ICONS.done)
 				: theme.fg("error", ICONS.fail);
@@ -415,7 +463,7 @@ export function renderSubagentResult(
 				const rIcon = rFailed
 					? theme.fg("error", ICONS.fail)
 					: currentIsRunning && r === currentResult
-						? theme.fg("warning", spinFrame(0))
+						? theme.fg("warning", spinFrame(tick))
 						: theme.fg("success", ICONS.done);
 				const displayItems = getDisplayItems(r.messages);
 				const finalOutput = getResultFinalOutput(r);
@@ -437,8 +485,11 @@ export function renderSubagentResult(
 					if (item.type === "toolCall") {
 						container.addChild(
 							new Text(
-								treePrefix(false, theme) +
+								treeBlock(
+									theme,
+									false,
 									formatToolCall(item.name, item.args, theme.fg.bind(theme)),
+								),
 								0,
 								0,
 							),
@@ -464,36 +515,34 @@ export function renderSubagentResult(
 			return container;
 		}
 
-		// Collapsed view
-		let text =
-			icon +
-			" " +
-			theme.fg("toolTitle", theme.bold("chain ")) +
-			theme.fg("accent", `${successCount}/${details.results.length} steps`);
-		for (const r of details.results) {
+		// Collapsed: one summary row per step (no tool dump / prose dump).
+		const lines: string[] = [
+			withIcon(
+				icon,
+				theme.fg("toolTitle", theme.bold("chain ")) +
+					theme.fg("accent", `${successCount}/${details.results.length} steps`),
+			),
+		];
+		for (let i = 0; i < details.results.length; i++) {
+			const r = details.results[i]!;
 			const rFailed = isResultError(r);
 			const rIcon = rFailed
 				? theme.fg("error", ICONS.fail)
 				: currentIsRunning && r === currentResult
-					? theme.fg("warning", spinFrame(0))
+					? theme.fg("warning", spinFrame(tick))
 					: theme.fg("success", ICONS.done);
-			const collapsed = getCollapsedDisplayItems(r);
-			const finalOutput = getResultFinalOutput(r).trim();
-			text += `\n\n${theme.fg("muted", `─── Step ${r.step}: `)}${theme.fg("accent", r.agent)} ${rIcon}`;
-			if (rFailed && r.errorMessage)
-				text += `\n${theme.fg("error", `Error: ${r.errorMessage}`)}`;
-			if (collapsed.items.length > 0)
-				text += `\n${renderDisplayItems(collapsed.items, 5, collapsed.total)}`;
-			else if (currentIsRunning && r === currentResult)
-				text += `\n${theme.fg("muted", "(running...)")}`;
-			else if (finalOutput)
-				text += `\n${theme.fg("toolOutput", finalOutput.split("\n").slice(0, 3).join("\n"))}`;
-			else if (!rFailed || !r.errorMessage) text += `\n${theme.fg("muted", "(no output)")}`;
+			lines.push(
+				agentSummaryRow(theme, r, {
+					icon: rIcon,
+					label: `Step ${r.step}: ${r.agent}`,
+					isLast: i === details.results.length - 1,
+				}),
+			);
 		}
 		const usageStr = formatUsageStats(aggregateUsage(details.results));
-		if (usageStr) text += `\n\n${theme.fg("dim", `Total: ${usageStr}`)}`;
-		text += `\n${theme.fg("muted", "(Ctrl+O to expand)")}`;
-		return new Text(text, 0, 0);
+		if (usageStr) lines.push(theme.fg("dim", `Total: ${usageStr}`));
+		lines.push(theme.fg("muted", "(Ctrl+O to expand)"));
+		return new Text(lines.join("\n"), 0, 0);
 	}
 
 	if (details.mode === "parallel") {
@@ -513,7 +562,7 @@ export function renderSubagentResult(
 			isPartial && !aggregator && running === 0 && failCount === 0;
 		const isRunning = running > 0 || aggregatorRunning || pendingSuccessfulSettlement;
 		const icon = isRunning
-			? theme.fg("warning", spinFrame(0))
+			? theme.fg("warning", spinFrame(tick))
 			: failCount > 0 || aggregatorFailed
 				? theme.fg("warning", ICONS.active)
 				: theme.fg("success", ICONS.done);
@@ -527,7 +576,7 @@ export function renderSubagentResult(
 				? `${successCount}/${details.results.length} tasks + fan-in`
 				: `${successCount}/${details.results.length} tasks`;
 
-		if (expanded && !isRunning) {
+		if (expanded) {
 			const container = new Container();
 			container.addChild(
 				new Text(
@@ -542,7 +591,7 @@ export function renderSubagentResult(
 				const rIcon = rFailed
 					? theme.fg("error", ICONS.fail)
 					: resultIsRunning(r)
-						? theme.fg("warning", spinFrame(0))
+						? theme.fg("warning", spinFrame(tick))
 						: theme.fg("success", ICONS.done);
 				const displayItems = getDisplayItems(r.messages);
 				const finalOutput = getResultFinalOutput(r);
@@ -555,21 +604,22 @@ export function renderSubagentResult(
 				if (rFailed && r.errorMessage)
 					container.addChild(new Text(theme.fg("error", `Error: ${r.errorMessage}`), 0, 0));
 
-				// Show tool calls
-				for (const item of displayItems) {
-					if (item.type === "toolCall") {
-						container.addChild(
-							new Text(
-								treePrefix(false, theme) +
-									formatToolCall(item.name, item.args, theme.fg.bind(theme)),
-								0,
-								0,
+				const toolCalls = displayItems.filter((item) => item.type === "toolCall");
+				for (let i = 0; i < toolCalls.length; i++) {
+					const item = toolCalls[i]!;
+					container.addChild(
+						new Text(
+							treeBlock(
+								theme,
+								i === toolCalls.length - 1 && !finalOutput,
+								formatToolCall(item.name, item.args, theme.fg.bind(theme)),
 							),
-						);
-					}
+							0,
+							0,
+						),
+					);
 				}
 
-				// Show final output as markdown
 				if (finalOutput) {
 					container.addChild(new Spacer(1));
 					container.addChild(new Markdown(finalOutput.trim(), 0, 0, mdTheme));
@@ -583,7 +633,7 @@ export function renderSubagentResult(
 				const rIcon = aggregatorFailed
 					? theme.fg("error", ICONS.fail)
 					: aggregatorRunning
-						? theme.fg("warning", spinFrame(0))
+						? theme.fg("warning", spinFrame(tick))
 						: theme.fg("success", ICONS.done);
 				const displayItems = getDisplayItems(aggregator.messages);
 				const finalOutput = getResultFinalOutput(aggregator);
@@ -603,17 +653,20 @@ export function renderSubagentResult(
 					container.addChild(
 						new Text(theme.fg("error", `Error: ${aggregator.errorMessage}`), 0, 0),
 					);
-				for (const item of displayItems) {
-					if (item.type === "toolCall") {
-						container.addChild(
-							new Text(
-								treePrefix(false, theme) +
-									formatToolCall(item.name, item.args, theme.fg.bind(theme)),
-								0,
-								0,
+				const toolCalls = displayItems.filter((item) => item.type === "toolCall");
+				for (let i = 0; i < toolCalls.length; i++) {
+					const item = toolCalls[i]!;
+					container.addChild(
+						new Text(
+							treeBlock(
+								theme,
+								i === toolCalls.length - 1 && !finalOutput,
+								formatToolCall(item.name, item.args, theme.fg.bind(theme)),
 							),
-						);
-					}
+							0,
+							0,
+						),
+					);
 				}
 				if (finalOutput) {
 					container.addChild(new Spacer(1));
@@ -632,54 +685,48 @@ export function renderSubagentResult(
 			return container;
 		}
 
-		// Collapsed view (or still running)
-		let text = `${icon} ${theme.fg("toolTitle", theme.bold("parallel "))}${theme.fg("accent", status)}`;
-		for (const r of details.results) {
+		// Collapsed: header + one line per agent (+ fan-in), never dump tool trees / reports.
+		const rows: string[] = [
+			`${icon} ${theme.fg("toolTitle", theme.bold("parallel "))}${theme.fg("accent", status)}`,
+		];
+		const agentCount = details.results.length + (aggregator ? 1 : 0);
+		for (let i = 0; i < details.results.length; i++) {
+			const r = details.results[i]!;
 			const rFailed = isResultError(r);
 			const rRunning = resultIsRunning(r);
 			const rIcon = rFailed
 				? theme.fg("error", ICONS.fail)
 				: rRunning
-					? theme.fg("warning", spinFrame(0))
+					? theme.fg("warning", spinFrame(tick))
 					: theme.fg("success", ICONS.done);
-			const collapsed = getCollapsedDisplayItems(r);
-			const finalOutput = getResultFinalOutput(r).trim();
-			text += `\n\n${theme.fg("muted", "─── ")}${theme.fg("accent", r.agent)} ${rIcon}`;
-			if (rFailed && r.errorMessage)
-				text += `\n${theme.fg("error", `Error: ${r.errorMessage}`)}`;
-			if (collapsed.items.length > 0)
-				text += `\n${renderDisplayItems(collapsed.items, 5, collapsed.total)}`;
-			else if (rRunning) text += `\n${theme.fg("muted", "(running...)")}`;
-			else if (finalOutput)
-				text += `\n${theme.fg("toolOutput", finalOutput.split("\n").slice(0, 3).join("\n"))}`;
-			else if (!rFailed || !r.errorMessage) text += `\n${theme.fg("muted", "(no output)")}`;
+			rows.push(
+				agentSummaryRow(theme, r, {
+					icon: rIcon,
+					isLast: i === agentCount - 1,
+				}),
+			);
 		}
 		if (aggregator) {
 			const rIcon = aggregatorFailed
 				? theme.fg("error", ICONS.fail)
 				: aggregatorRunning
-					? theme.fg("warning", spinFrame(0))
+					? theme.fg("warning", spinFrame(tick))
 					: theme.fg("success", ICONS.done);
-			const collapsed = getCollapsedDisplayItems(aggregator);
-			const finalOutput = getResultFinalOutput(aggregator).trim();
-			text += `\n\n${theme.fg("muted", "─── fan-in → ")}${theme.fg("accent", aggregator.agent)} ${rIcon}`;
-			if (aggregatorFailed && aggregator.errorMessage)
-				text += `\n${theme.fg("error", `Error: ${aggregator.errorMessage}`)}`;
-			if (collapsed.items.length > 0)
-				text += `\n${renderDisplayItems(collapsed.items, 5, collapsed.total)}`;
-			else if (aggregatorRunning) text += `\n${theme.fg("muted", "(running...)")}`;
-			else if (finalOutput)
-				text += `\n${theme.fg("toolOutput", finalOutput.split("\n").slice(0, 3).join("\n"))}`;
-			else if (!aggregatorFailed || !aggregator.errorMessage)
-				text += `\n${theme.fg("muted", "(no output)")}`;
+			rows.push(
+				agentSummaryRow(theme, aggregator, {
+					icon: rIcon,
+					label: `fan-in → ${aggregator.agent}`,
+					isLast: true,
+				}),
+			);
 		}
 		if (!isRunning) {
 			const usageResults = aggregator ? [...details.results, aggregator] : details.results;
 			const usageStr = formatUsageStats(aggregateUsage(usageResults));
-			if (usageStr) text += `\n\n${theme.fg("dim", `Total: ${usageStr}`)}`;
+			if (usageStr) rows.push(theme.fg("dim", `Total: ${usageStr}`));
 		}
-		if (!expanded) text += `\n${theme.fg("muted", "(Ctrl+O to expand)")}`;
-		return new Text(text, 0, 0);
+		rows.push(theme.fg("muted", "(Ctrl+O to expand)"));
+		return new Text(rows.join("\n"), 0, 0);
 	}
 
 	const text = result.content[0];

@@ -277,6 +277,26 @@ export interface ExtensionUIContext {
 
 	/** Set tool output expansion state. */
 	setToolsExpanded(expanded: boolean): void;
+
+	/**
+	 * Replace the chat-column transcript source (Agent View).
+	 * Pass `{ kind: "main" }` or `undefined` to restore the session transcript.
+	 * When `kind: "agent"`, `getMessages` supplies the messages rendered in the same chat column.
+	 */
+	setTranscriptSource(
+		source:
+			| undefined
+			| { kind: "main" }
+			| {
+					kind: "agent";
+					agentId: string;
+					label?: string;
+					getMessages: () => AgentMessage[];
+			  },
+	): void;
+
+	/** Current chat-column transcript focus. */
+	getTranscriptSource(): { kind: "main" } | { kind: "agent"; agentId: string; label?: string };
 }
 
 // ============================================================================

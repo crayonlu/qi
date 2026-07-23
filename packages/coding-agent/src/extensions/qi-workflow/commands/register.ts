@@ -37,6 +37,7 @@ import {
 	runWorkflow,
 	undoLastRewind,
 } from "../runtime/index.ts";
+import { focusAgentTranscript } from "../ui/apply-transcript-focus.ts";
 import {
 	openAgentView,
 	openDashboard,
@@ -457,11 +458,15 @@ export function registerQiWorkflowCommands(pi: ExtensionAPI): void {
 	});
 
 	pi.registerCommand("agents", {
-		description: "Open Agent View — live/detached subagents (Claude-style roster)",
+		description: "Open Agent View — live/detached subagents; Enter focuses transcript",
 		category: "work",
 		handler: async (_args, ctx) => {
 			if (!requireUi(ctx, "agents")) return;
-			await openAgentView(ctx);
+			const picked = await openAgentView(ctx);
+			if (picked?.agentId) {
+				focusAgentTranscript(ctx.ui, picked.agentId);
+				ctx.ui.notify(`Viewing @${picked.agentId.slice(0, 12)}… — Esc returns to @main`, "info");
+			}
 		},
 	});
 

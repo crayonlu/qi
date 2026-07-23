@@ -11,7 +11,7 @@ export function goalInstructions(opts: { hasUI: boolean }): string {
 
 Stay focused on the goal objective and its todos. Prefer concrete progress and verification over speculation.
 
-When the goal is fully achieved with evidence, call the goal_complete tool with that evidence. When you are blocked and cannot proceed, call goal_blocked with a clear reason.
+When the goal is fully achieved with evidence, call the goal_complete tool with that evidence. Calling goal_complete is not the end of the user conversation — after it succeeds, always leave a short visible wrap-up stating what was achieved and how it was verified. When you are blocked and cannot proceed, call goal_blocked with a clear reason.
 
 ${askLine}`;
 }

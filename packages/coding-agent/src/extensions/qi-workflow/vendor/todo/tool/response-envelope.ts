@@ -51,10 +51,10 @@ export function formatContent(op: Op, state: TaskState): string {
 		}
 		case "update": {
 			if (!op.changed) {
-				return `No change: #${op.id} already matches the requested values (status: ${op.toStatus})`;
+				return `No change: #${op.id} ${op.subject} already matches the requested values (status: ${op.toStatus})`;
 			}
 			const transition = op.fromStatus !== op.toStatus ? ` (${op.fromStatus} → ${op.toStatus})` : "";
-			return `Updated #${op.id}${transition}`;
+			return `Updated #${op.id}: ${op.subject}${transition}`;
 		}
 		case "delete":
 			return `Deleted #${op.id}: ${op.subject}`;

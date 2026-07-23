@@ -29,7 +29,9 @@ import {
 	type ParentRuntimeSnapshot,
 } from "./in-process-transport.ts";
 import { WorkspaceManager } from "./workspace.ts";
-import { clearAgentBridge, notifyAgentBridgeChanged, setStatefulAgentAccessor } from "./agent-bridge.ts";
+import { clearAgentBridge, followUpStatefulAgent, getStatefulAgent, notifyAgentBridgeChanged, setStatefulAgentAccessor } from "./agent-bridge.ts";
+import { syncTranscriptSourceToUi } from "../../ui/apply-transcript-focus.ts";
+import { exitTranscriptFocus, viewingAgentId } from "../../ui/transcript-focus.ts";
 
 const ContextModeSchema = Type.Union([
 	StringEnum(["none", "all", "summary"] as const),
@@ -61,6 +63,7 @@ export function registerStatefulSubagents(
 	const workspaceManager = new WorkspaceManager();
 	const isolatedAgents = new Map<string, string>();
 	const seenMessageIds = new Set<string>();
+	const seenCompletionKeys = new Set<string>();
 	const parentRuntime: ParentRuntimeSnapshot = { model: undefined, thinkingLevel: "off" };
 	const orchestration = new RootOrchestrationState();
 	const cancelledRecoveryNonces = new Set<string>();
@@ -119,7 +122,7 @@ export function registerStatefulSubagents(
 				if (generation !== runtimeGeneration) return;
 				orchestration.complete(completion.agent.id);
 				if (!completionWaiters.has(completion.agent.id)) {
-					sendDetachedCompletion(pi, completion);
+					sendDetachedCompletion(pi, completion, seenCompletionKeys);
 				}
 			},
 		});
@@ -137,6 +140,7 @@ export function registerStatefulSubagents(
 		setStatefulAgentAccessor({
 			list: (includeClosed) => requireRegistry().list(includeClosed),
 			get: (id) => requireRegistry().get(id),
+			followUp: (id, task) => requireRegistry().followUp(id, task),
 		});
 		const sweepEveryMs = Math.max(1_000, Math.min(settings.idleTtlMs ?? 60 * 60 * 1000, 60_000));
 		sweepTimer = setInterval(() => {
@@ -156,6 +160,31 @@ export function registerStatefulSubagents(
 			return;
 		}
 		rememberCancelledRecovery(orchestration.supersedePending(), cancelledRecoveryNonces);
+	});
+
+	// Agent View transcript focus: route user submissions to the viewed subagent.
+	pi.on("input", async (event, ctx) => {
+		if (event.source === "extension") return;
+		const agentId = viewingAgentId();
+		if (!agentId) return;
+		const task = event.text.trim();
+		if (!task) return { action: "handled" as const };
+		const agent = getStatefulAgent(agentId);
+		if (!agent) {
+			exitTranscriptFocus();
+			syncTranscriptSourceToUi(ctx.ui);
+			ctx.ui.notify("Focused agent is gone — returned to @main", "warning");
+			return { action: "handled" as const };
+		}
+		try {
+			await followUpStatefulAgent(agentId, task);
+			syncTranscriptSourceToUi(ctx.ui);
+			ctx.ui.notify(`Sent follow-up to ${agent.agent}`, "info");
+		} catch (error) {
+			const reason = error instanceof Error ? error.message : String(error);
+			ctx.ui.notify(`Follow-up failed: ${reason}`, "error");
+		}
+		return { action: "handled" as const };
 	});
 
 	pi.on("before_agent_start", () => {
@@ -200,6 +229,7 @@ export function registerStatefulSubagents(
 		}
 		isolatedAgents.clear();
 		seenMessageIds.clear();
+		seenCompletionKeys.clear();
 		completionWaiters.clear();
 		let cleanupError: unknown;
 		try {
@@ -229,9 +259,10 @@ export function registerStatefulSubagents(
 			"Do not delegate simple or critical-path work that the main agent can perform directly.",
 			"A single detached subagent is appropriate only for a concrete isolation or specialization benefit such as independent review, bounded context/output, a distinct model/tool profile, or workspace isolation.",
 			"Use one blocking subagent parallel call for multiple independent one-shot tasks; do not use repeated detached spawns when no reuse or overlap is needed.",
-			"After spawning, continue useful non-overlapping local work when available; otherwise call subagent_wait rather than yielding while delegated work remains unresolved.",
+			"After spawning, continue useful non-overlapping local work when available. Completions are pushed automatically and wake the main agent — do not poll with subagent_wait or subagent_messages as the primary coordination path.",
+			"subagent_wait is optional short sync only (bounded timeout). An empty subagent_messages mailbox is not success coordination.",
 			"Consume available completion messages and synthesize their results before finishing; interrupt or close agents that are no longer needed.",
-			"Detached completion is delivered automatically. Do not poll, wait forever, or spawn additional agents without a distinct need.",
+			"Detached completion is delivered automatically with a follow-up turn. Do not wait forever or spawn additional agents without a distinct need.",
 		],
 		parameters: Type.Object({
 			agent: Type.String({ minLength: 1 }),
@@ -342,7 +373,7 @@ export function registerStatefulSubagents(
 			trackSpawnedAgent(orchestration, agent);
 			return result(
 				agent,
-				`Spawned ${agent.agent} as ${agent.id}. Continue coordinating this agent; do useful non-overlapping work or call subagent_wait, then synthesize its result before finishing.`,
+				`Spawned ${agent.agent} as ${agent.id}. Continue useful non-overlapping work; completion will be pushed automatically and wake this session. Optional: subagent_wait for a short bounded sync only.`,
 			);
 		},
 	});
@@ -407,7 +438,8 @@ export function registerStatefulSubagents(
 	pi.registerTool({
 		name: "subagent_messages",
 		label: "Read Subagent Messages",
-		description: "Read unread mailbox messages and optionally acknowledge them.",
+		description:
+			"Read unread mailbox messages and optionally acknowledge them. Empty mailbox is not success coordination — prefer the automatic completion push that wakes the main agent.",
 		parameters: Type.Object({
 			agentId: Type.String(),
 			acknowledge: Type.Optional(Type.Boolean({ default: true })),
@@ -440,7 +472,8 @@ export function registerStatefulSubagents(
 	pi.registerTool({
 		name: "subagent_wait",
 		label: "Wait for Subagent",
-		description: "Wait for a stateful subagent turn without terminating it when the wait times out.",
+		description:
+			"Optional short sync: wait for a stateful subagent turn with a bounded timeout. Prefer the automatic completion push that wakes the main agent; do not use this as the primary coordination path or poll forever.",
 		parameters: Type.Object({
 			agentId: Type.String(),
 			timeoutMs: Type.Optional(Type.Number({ minimum: 1, maximum: 3_600_000, default: 30_000 })),
@@ -799,7 +832,11 @@ function hasPendingRootMessages(ctx: ExtensionContext): boolean {
 function sendDetachedCompletion(
 	pi: ExtensionAPI,
 	completion: AgentTurnCompletion,
+	seenKeys: Set<string>,
 ): void {
+	const key = completionDeliveryKey(completion);
+	if (seenKeys.has(key)) return;
+	seenKeys.add(key);
 	const content = buildDetachedCompletionMessage(completion);
 	pi.sendMessage(
 		{
@@ -810,10 +847,23 @@ function sendDetachedCompletion(
 				agentId: completion.agent.id,
 				agent: completion.agent.agent,
 				state: completion.agent.state,
+				completionKey: key,
 			},
 		},
-		{ deliverAs: "steer", triggerTurn: false },
+		DETACHED_COMPLETION_DELIVERY_OPTIONS,
 	);
+}
+
+export const DETACHED_COMPLETION_DELIVERY_OPTIONS = {
+	deliverAs: "followUp" as const,
+	triggerTurn: true,
+};
+
+/** Idempotency key so the same turn completion does not double-wake the root agent. */
+export function completionDeliveryKey(completion: AgentTurnCompletion): string {
+	const last = completion.agent.history[completion.agent.history.length - 1];
+	const endedAt = last?.completedAt ?? completion.agent.updatedAt;
+	return `${completion.agent.id}:${endedAt}`;
 }
 
 export function buildDetachedCompletionMessage(completion: AgentTurnCompletion): string {

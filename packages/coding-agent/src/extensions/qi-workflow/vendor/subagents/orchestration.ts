@@ -19,9 +19,10 @@ export const ORCHESTRATION_MARKER_PREFIX = "pi-subagent-orchestration:";
 const RECOVERY_PROMPT = [
 	"Delegated subagents still need root coordination.",
 	"Do not yield permanently while current delegated work is unresolved.",
-	"Continue useful non-overlapping local work, or call subagent_wait when no useful local continuation remains.",
+	"Continue useful non-overlapping local work while waiting; completions are pushed automatically and wake this turn.",
+	"subagent_wait is optional short sync only — do not poll forever. Empty subagent_messages is not success coordination.",
 	"Consume available subagent results and synthesize them before finishing.",
-	"Interrupt or close agents that are no longer needed; do not wait forever or spawn more agents unnecessarily.",
+	"Interrupt or close agents that are no longer needed; do not spawn more agents unnecessarily.",
 ].join(" ");
 
 /** Ephemeral root-turn coordination state. Never persisted across sessions. */

@@ -307,6 +307,14 @@ export async function runRpcMode(runtimeHost: AgentSessionRuntime): Promise<neve
 		setToolsExpanded(_expanded: boolean) {
 			// Tool expansion not supported in RPC mode - no TUI
 		},
+
+		setTranscriptSource(_source) {
+			// Transcript Agent View is TUI-only
+		},
+
+		getTranscriptSource() {
+			return { kind: "main" as const };
+		},
 	});
 
 	runtimeHost.setRebindSession(async () => {

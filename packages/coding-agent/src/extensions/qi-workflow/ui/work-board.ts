@@ -96,24 +96,31 @@ export function buildBoardLines(state: QiWorkflowState, theme: Theme, collapsed:
 			);
 		}
 		if (planVisible && plan) {
-			bits.push(theme.fg("muted", withIcon(planIcon(plan.status), `plan:${plan.status}`)));
+			const planColor = plan.status === "ready" ? "success" : plan.status === "executing" ? "thinkingText" : "muted";
+			bits.push(theme.fg(planColor, withIcon(planIcon(plan.status), `plan:${plan.status}`)));
 		}
 		if (unfinished.length > 0) {
 			const blocked = unfinished.filter((t) => t.status === "blocked").length;
-			const icon = blocked > 0 ? ICONS.todoBlocked : ICONS.todos;
-			bits.push(theme.fg(blocked > 0 ? "error" : "muted", withIcon(icon, `todos=${unfinished.length}`)));
+			const active = unfinished.filter((t) => t.status === "in_progress").length;
+			const icon = blocked > 0 ? ICONS.todoBlocked : active > 0 ? ICONS.todoActive : ICONS.todos;
+			bits.push(
+				theme.fg(
+					blocked > 0 ? "error" : active > 0 ? "warning" : "muted",
+					withIcon(icon, `todos=${unfinished.length}`),
+				),
+			);
 		}
 		const agents = countActiveAgents();
 		if (agents > 0) {
-			bits.push(theme.fg("accent", withIcon(ICONS.active, `agents=${agents}`)));
+			bits.push(theme.fg("thinkingText", withIcon(ICONS.active, `agents=${agents}`)));
 		}
 		if (activeTasks.length > 0) {
 			bits.push(theme.fg("accent", withIcon(ICONS.tasks, `tasks=${activeTasks.length}`)));
 		}
 		if (activeJobs.length > 0) {
-			bits.push(theme.fg("accent", withIcon(ICONS.jobs, `jobs=${activeJobs.length}`)));
+			bits.push(theme.fg("warning", withIcon(ICONS.jobs, `jobs=${activeJobs.length}`)));
 		}
-		const summary = bits.length > 0 ? bits.join(" ") : theme.fg("dim", "qi");
+		const summary = bits.length > 0 ? bits.join(ICON_GAP + ICON_GAP) : theme.fg("dim", "qi");
 		return [theme.fg("dim", "▸ ") + summary + theme.fg("dim", "  [/board expand]")];
 	}
 
@@ -129,7 +136,7 @@ export function buildBoardLines(state: QiWorkflowState, theme: Theme, collapsed:
 	}
 
 	if (planVisible && plan) {
-		const planColor = plan.status === "ready" ? "success" : plan.status === "executing" ? "accent" : "muted";
+		const planColor = plan.status === "ready" ? "success" : plan.status === "executing" ? "thinkingText" : "muted";
 		lines.push(
 			`${theme.fg(planColor, withIcon(planIcon(plan.status), `plan:${plan.status}`))} ${theme.fg("text", plan.goal)}` +
 				theme.fg("dim", "  [/plan execute · /plan ready]"),
@@ -139,10 +146,16 @@ export function buildBoardLines(state: QiWorkflowState, theme: Theme, collapsed:
 	if (unfinished.length > 0) {
 		const headingDone = state.todos.filter((t) => t.status === "completed").length;
 		const headingTotal = headingDone + unfinished.length;
-		const headingIcon = unfinished.some((t) => t.status === "in_progress")
-			? theme.fg("warning", ICONS.solid)
-			: theme.fg("dim", ICONS.idle);
-		lines.push(`${headingIcon}${ICON_GAP}${theme.fg("muted", `Todos (${headingDone}/${headingTotal})`)}`);
+		const hasActive = unfinished.some((t) => t.status === "in_progress");
+		const hasBlocked = unfinished.some((t) => t.status === "blocked");
+		const headingIcon = hasBlocked
+			? theme.fg("error", ICONS.fail)
+			: hasActive
+				? theme.fg("warning", ICONS.solid)
+				: theme.fg("accent", ICONS.idle);
+		lines.push(
+			`${headingIcon}${ICON_GAP}${theme.fg(hasBlocked ? "error" : hasActive ? "warning" : "accent", `Todos (${headingDone}/${headingTotal})`)}`,
+		);
 		const visible = unfinished.slice(0, 12);
 		for (let i = 0; i < visible.length; i++) {
 			const t = visible[i]!;
@@ -157,7 +170,7 @@ export function buildBoardLines(state: QiWorkflowState, theme: Theme, collapsed:
 	const agents = countActiveAgents();
 	if (agents > 0) {
 		lines.push(
-			`${theme.fg("accent", withIcon(ICONS.active, "agents"))} ${theme.fg("text", `${agents} active`)}${theme.fg("dim", "  [/agents]")}`,
+			`${theme.fg("thinkingText", withIcon(ICONS.active, "agents"))} ${theme.fg("text", `${agents} active`)}${theme.fg("dim", "  [/agents]")}`,
 		);
 	}
 

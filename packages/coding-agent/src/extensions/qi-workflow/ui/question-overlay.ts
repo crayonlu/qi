@@ -10,7 +10,7 @@ import type { Theme } from "../../../modes/interactive/theme/theme.ts";
 import type { WorkflowController } from "../controller.ts";
 import { answerQuestion, cancelQuestion, type StructuredQuestion } from "../domain/index.ts";
 import { renderBanner } from "./chrome.ts";
-import { BOTTOM_OVERLAY } from "./layout.ts";
+import { BOTTOM_OVERLAY, panelMaxHeight, tuiRows } from "./layout.ts";
 
 export type QuestionOverlayResult =
 	| { action: "answered"; selected: string[]; freeInput?: string; notes?: string; answerSummary: string }
@@ -271,8 +271,7 @@ class QuestionOverlay implements Component {
 					: "↑↓ · Enter select · n notes · c collapse · Esc cancel";
 		lines.push(truncateToWidth(pad + th.fg("dim", hint), w));
 
-		const rows = (this.tui as TUI & { terminal?: { rows?: number } }).terminal?.rows ?? 24;
-		const maxRows = Math.max(6, Math.floor(rows * 0.8));
+		const maxRows = panelMaxHeight(tuiRows(this.tui), "sheet");
 		let view = lines;
 		if (lines.length > maxRows) {
 			// Keep header + hint frame; scroll options region by focusing near optionIndex.

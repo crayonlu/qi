@@ -5,7 +5,7 @@ import type { Theme } from "../../../modes/interactive/theme/theme.ts";
 import type { WorkflowController } from "../controller.ts";
 import type { RestoreScope, RewindCheckpoint } from "../domain/index.ts";
 import { renderBoxPanel } from "./chrome.ts";
-import { CENTER_OVERLAY, termCols } from "./layout.ts";
+import { CENTER_OVERLAY, panelMaxHeight, termCols, tuiRows } from "./layout.ts";
 
 export interface RewindPanelApi {
 	restore(checkpointId: string, scope: RestoreScope): Promise<void>;
@@ -216,6 +216,7 @@ class RewindPanel implements Component {
 			width: w,
 			body,
 			footer: [th.fg("dim", "↑↓ checkpoint · ←→ scope · p preview · Enter restore · u undo · Esc close")],
+			maxHeight: panelMaxHeight(tuiRows(this.tui), "modal"),
 		});
 
 		this.cachedWidth = width;

@@ -61,7 +61,8 @@ describe("qi-workflow TUI board/footer/overlays", () => {
 	});
 
 	it("maps semantic status colors", () => {
-		expect(statusThemeColor("running")).toBe("accent");
+		expect(statusThemeColor("running")).toBe("thinkingText");
+		expect(statusThemeColor("active")).toBe("accent");
 		expect(statusThemeColor("waiting")).toBe("muted");
 		expect(statusThemeColor("completed")).toBe("success");
 		expect(statusThemeColor("failed")).toBe("error");

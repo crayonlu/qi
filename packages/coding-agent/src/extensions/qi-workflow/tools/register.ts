@@ -24,6 +24,7 @@ import {
 } from "../domain/index.ts";
 import { jobManager } from "../runtime/index.ts";
 import { showQuestionOverlay } from "../ui/index.ts";
+import { renderProseOrChrome } from "../ui/render-prose.ts";
 import type { QuestionAnswer } from "../vendor/ask/tool/types.ts";
 import { planModeCompleted } from "../vendor/plan/completion-tool.ts";
 
@@ -321,10 +322,8 @@ export function registerQiWorkflowTools(pi: ExtensionAPI): void {
 				0,
 			);
 		},
-		renderResult(result, _options, theme) {
-			const text = result.content[0]?.type === "text" ? result.content[0].text : "";
-			const err = text.startsWith("Error:");
-			return new Text(theme.fg(err ? "error" : "success", summarize(text, 100)), 0, 0);
+		renderResult(result, options, theme) {
+			return renderProseOrChrome(result, options, theme, summarize);
 		},
 	});
 

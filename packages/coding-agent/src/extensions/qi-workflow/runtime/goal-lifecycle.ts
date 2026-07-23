@@ -9,7 +9,14 @@ import { Type } from "typebox";
 import { workflowController } from "../controller.ts";
 import { nowMs } from "../domain/ids.ts";
 import type { Goal, GoalStatus, QiWorkflowState } from "../domain/types.ts";
+import { renderProseOrChrome } from "../ui/render-prose.ts";
 import { defineTool, type ExtensionAPI } from "../vendor/pi-coding-agent-shim.ts";
+
+function summarizeForRender(text: string, max: number): string {
+	const flat = text.replace(/\s+/g, " ").trim();
+	if (flat.length <= max) return flat;
+	return `${flat.slice(0, Math.max(0, max - 1))}…`;
+}
 
 function toQiStatus(status: ActiveGoal["status"]): GoalStatus {
 	if (status === "paused") return "paused";
@@ -73,7 +80,7 @@ import { currentTokenTotal } from "../vendor/goal/accounting.ts";
 import { completeGoalArguments, parseCommand } from "../vendor/goal/command.ts";
 import { GoalCommandController } from "../vendor/goal/commands.ts";
 import { type ActiveGoal, loadGoalStateFromSession } from "../vendor/goal/persistence.ts";
-import { buildGoalPrompt, buildGoalSystemPrompt } from "../vendor/goal/prompts.ts";
+import { buildGoalCompleteToolResultText, buildGoalPrompt, buildGoalSystemPrompt } from "../vendor/goal/prompts.ts";
 import { activateQueuedGoal } from "../vendor/goal/queue.ts";
 import {
 	type AssistantMessageLike,
@@ -189,6 +196,7 @@ export function attachGoalLifecycle(pi: ExtensionAPI, options: GoalOptions = {})
 			"Before calling goal_complete, audit the active goal requirement by requirement against the current files, command output, tests, or external state.",
 			"Pass the exact goal_id shown in the current /goal prompt; never reuse a goal_id from an older, stopped, replaced, or cleared turn.",
 			"Call goal_complete only after the requested goal is fully implemented, verified, and no known required work remains; otherwise keep working.",
+			"Calling goal_complete is not the end of the user conversation — after it succeeds, leave a short visible wrap-up stating what was achieved and how it was verified.",
 		],
 		parameters: Type.Object({
 			goal_id: Type.String({
@@ -297,16 +305,16 @@ export function attachGoalLifecycle(pi: ExtensionAPI, options: GoalOptions = {})
 				ctx.ui.setStatus(STATUS_KEY, "complete");
 				ctx.ui.notify(`Goal complete: ${goal}. Priority goal waits for Pi to settle.`, "info");
 				return {
-					content: [{ type: "text", text: `Goal complete: ${summary}` }],
+					content: [{ type: "text", text: buildGoalCompleteToolResultText(summary) }],
 					details: {
 						goal,
 						goal_id: requestedGoalId,
 						summary,
 					} satisfies GoalCompleteDetails,
-					terminate: true,
 				};
 			}
 			if (runtime.queuedGoals.length > 0) {
+				const nextQueued = runtime.queuedGoals[0]?.text;
 				runtime.pendingQueueAction = {
 					kind: "advance",
 					goalId: runtime.activeGoal.id,
@@ -315,12 +323,12 @@ export function attachGoalLifecycle(pi: ExtensionAPI, options: GoalOptions = {})
 				};
 				persistGoal(runtime.activeGoal);
 				ctx.ui.setStatus(STATUS_KEY, "complete");
-				ctx.ui.notify(`Goal complete: ${goal}. Next goal queued: ${runtime.queuedGoals[0]?.text}`, "info");
+				ctx.ui.notify(`Goal complete: ${goal}. Next goal queued: ${nextQueued}`, "info");
 				return {
 					content: [
 						{
 							type: "text",
-							text: `Goal complete: ${summary}\nNext goal queued: ${runtime.queuedGoals[0]?.text}`,
+							text: buildGoalCompleteToolResultText(summary, { nextQueued }),
 						},
 					],
 					details: {
@@ -328,7 +336,6 @@ export function attachGoalLifecycle(pi: ExtensionAPI, options: GoalOptions = {})
 						goal_id: requestedGoalId,
 						summary,
 					} satisfies GoalCompleteDetails,
-					terminate: true,
 				};
 			}
 			persistGoal(runtime.activeGoal);
@@ -339,10 +346,12 @@ export function attachGoalLifecycle(pi: ExtensionAPI, options: GoalOptions = {})
 			ctx.ui.notify(`Goal complete: ${goal}`, "info");
 
 			return {
-				content: [{ type: "text", text: `Goal complete: ${summary}` }],
+				content: [{ type: "text", text: buildGoalCompleteToolResultText(summary) }],
 				details: { goal, goal_id: requestedGoalId, summary } satisfies GoalCompleteDetails,
-				terminate: true,
 			};
+		},
+		renderResult(result, options, theme) {
+			return renderProseOrChrome(result, options, theme, summarizeForRender);
 		},
 	});
 

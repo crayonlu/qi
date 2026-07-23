@@ -2,10 +2,14 @@ import type { ExtensionUIContext } from "../../../core/extensions/types.ts";
 import type { WorkflowController } from "../controller.ts";
 import type { QiWorkflowState } from "../domain/index.ts";
 import { subscribeAgentBridge } from "../vendor/subagents/agent-bridge.ts";
+import { syncTranscriptSourceToUi } from "./apply-transcript-focus.ts";
 import { footerNeedsAnimation, refreshFooter } from "./footer.ts";
+import { exitTranscriptFocus, isViewingAgent, subscribeTranscriptFocus } from "./transcript-focus.ts";
 import { refreshBoard } from "./work-board.ts";
 
-export type QiUiHost = { ui: Pick<ExtensionUIContext, "setWidget" | "setStatus"> };
+export type QiUiHost = {
+	ui: Pick<ExtensionUIContext, "setWidget" | "setStatus" | "setTranscriptSource" | "getTranscriptSource">;
+};
 
 const ANIM_MS = 120;
 
@@ -44,6 +48,13 @@ export function subscribeQiUi(ctx: QiUiHost, controller: WorkflowController): ()
 		}
 	};
 
+	const reconcileFocusFromUi = () => {
+		// Esc in interactive-mode clears the chat column; mirror that into focus state.
+		if (ctx.ui.getTranscriptSource().kind === "main" && isViewingAgent()) {
+			exitTranscriptFocus();
+		}
+	};
+
 	refreshQiUi(ctx, controller, tick);
 	syncAnim(controller.getState());
 
@@ -53,13 +64,20 @@ export function subscribeQiUi(ctx: QiUiHost, controller: WorkflowController): ()
 	});
 
 	const unsubAgents = subscribeAgentBridge(() => {
+		reconcileFocusFromUi();
+		if (isViewingAgent()) syncTranscriptSourceToUi(ctx.ui as ExtensionUIContext);
 		refreshQiUi(ctx, controller, tick);
 		syncAnim(controller.getState());
+	});
+
+	const unsubFocus = subscribeTranscriptFocus(() => {
+		syncTranscriptSourceToUi(ctx.ui as ExtensionUIContext);
 	});
 
 	return () => {
 		unsub();
 		unsubAgents();
+		unsubFocus();
 		stopAnim();
 	};
 }

@@ -4,7 +4,7 @@
  */
 
 import type { Component, TUI } from "@earendil-works/pi-tui";
-import { matchesKey, truncateToWidth, wrapTextWithAnsi } from "@earendil-works/pi-tui";
+import { matchesKey, truncateToWidth, visibleWidth, wrapTextWithAnsi } from "@earendil-works/pi-tui";
 import type { ExtensionUIContext } from "../../../core/extensions/types.ts";
 import type { Theme } from "../../../modes/interactive/theme/theme.ts";
 import {
@@ -14,7 +14,8 @@ import {
 	subscribeAgentBridge,
 } from "../vendor/subagents/agent-bridge.ts";
 import type { ManagedAgent } from "../vendor/subagents/registry.ts";
-import { CENTER_OVERLAY } from "./layout.ts";
+import { fitCell } from "./chrome.ts";
+import { CENTER_OVERLAY, panelMaxBodyRows, tuiRows } from "./layout.ts";
 import { colorStatus } from "./status-color.ts";
 import { ICONS, spinFrame, statusGlyph, withIcon } from "./status-icons.ts";
 
@@ -55,15 +56,12 @@ function itemLabel(item: RosterItem): string {
 	return `${item.agent.agent} ${shortId(item.agent.id)}`;
 }
 
-function padCell(text: string, width: number): string {
-	return truncateToWidth(text.padEnd(Math.max(0, width)), width);
-}
-
 function rightAligned(left: string, right: string, width: number): string {
 	const gap = 1;
-	const maxLeft = Math.max(1, width - right.length - gap);
+	const rightW = visibleWidth(right);
+	const maxLeft = Math.max(1, width - rightW - gap);
 	const clipped = truncateToWidth(left, maxLeft);
-	const pad = Math.max(0, width - clipped.length - right.length);
+	const pad = Math.max(0, width - visibleWidth(clipped) - rightW);
 	return clipped + " ".repeat(pad) + right;
 }
 
@@ -111,7 +109,7 @@ function detailLines(item: RosterItem | undefined, theme: Theme): string[] {
 class AgentViewPanel implements Component {
 	private tui: TUI;
 	private theme: Theme;
-	private done: (result: undefined) => void;
+	private done: (result: { agentId: string } | undefined) => void;
 	private selected = 0;
 	private detailScroll = 0;
 	private detailAutoFollow = true;
@@ -123,7 +121,7 @@ class AgentViewPanel implements Component {
 	private disposed = false;
 	private includeClosed = true;
 
-	constructor(tui: TUI, theme: Theme, done: (result: undefined) => void) {
+	constructor(tui: TUI, theme: Theme, done: (result: { agentId: string } | undefined) => void) {
 		this.tui = tui;
 		this.theme = theme;
 		this.done = done;
@@ -160,6 +158,15 @@ class AgentViewPanel implements Component {
 		if (matchesKey(data, "escape") || data.toLowerCase() === "q") {
 			this.dispose();
 			this.done(undefined);
+			return;
+		}
+		if (matchesKey(data, "enter")) {
+			const items = this.items();
+			const selected = items[this.selected];
+			if (selected?.kind === "stateful") {
+				this.dispose();
+				this.done({ agentId: selected.agent.id });
+			}
 			return;
 		}
 		if (matchesKey(data, "up") || data.toLowerCase() === "k") {
@@ -226,8 +233,9 @@ class AgentViewPanel implements Component {
 		}
 		const theme = this.theme;
 		const innerWidth = width - 2;
-		const rows = this.tui.terminal?.rows ?? 32;
-		this.bodyHeight = Math.max(2, Math.min(30, Math.floor(rows * 0.85) - 6));
+		// Cap to modal maxHeight so TUI never slices off the bottom ╰─╯ border,
+		// and CENTER_OVERLAY's bottom margin keeps the editor clear.
+		this.bodyHeight = panelMaxBodyRows(tuiRows(this.tui), "modal", 5);
 		const rosterWidth = Math.max(22, Math.min(46, Math.floor((innerWidth - 1) * 0.4)));
 		const detailWidth = Math.max(1, innerWidth - rosterWidth - 1);
 		const items = this.items();
@@ -251,21 +259,21 @@ class AgentViewPanel implements Component {
 			theme.fg("accent", ICONS.active),
 			theme.bold("Agent View") + theme.fg("dim", " · live subagents · /agents"),
 		);
-		lines.push(theme.fg("border", "│") + padCell(` ${title}`, innerWidth) + theme.fg("border", "│"));
+		lines.push(theme.fg("border", "│") + fitCell(` ${title}`, innerWidth) + theme.fg("border", "│"));
 		lines.push(theme.fg("border", `├${"─".repeat(rosterWidth)}┬${"─".repeat(detailWidth)}┤`));
 		for (let i = 0; i < this.bodyHeight; i++) {
 			lines.push(
 				theme.fg("border", "│") +
-					padCell(roster[i] ?? "", rosterWidth) +
+					fitCell(roster[i] ?? "", rosterWidth) +
 					theme.fg("border", "│") +
-					padCell(visibleDetails[i] ?? "", detailWidth) +
+					fitCell(visibleDetails[i] ?? "", detailWidth) +
 					theme.fg("border", "│"),
 			);
 		}
 		lines.push(theme.fg("border", `├${"─".repeat(rosterWidth)}┴${"─".repeat(detailWidth)}┤`));
 		const position = items.length ? `${this.selected + 1}/${items.length}` : "0/0";
-		const footer = ` ↑↓/jk · PgUp/PgDn · c closed · Esc · ${position}`;
-		lines.push(theme.fg("border", "│") + padCell(theme.fg("dim", footer), innerWidth) + theme.fg("border", "│"));
+		const footer = ` ↑↓/jk · Enter focus · PgUp/PgDn · c closed · Esc · ${position}`;
+		lines.push(theme.fg("border", "│") + fitCell(theme.fg("dim", footer), innerWidth) + theme.fg("border", "│"));
 		lines.push(theme.fg("border", `╰${"─".repeat(innerWidth)}╯`));
 		return lines.map((line) => truncateToWidth(line, width));
 	}
@@ -281,9 +289,15 @@ class AgentViewPanel implements Component {
 	}
 }
 
-export async function openAgentView(ctx: { ui: Pick<ExtensionUIContext, "custom">; hasUI?: boolean }): Promise<void> {
-	await ctx.ui.custom<void>((tui, theme, _keybindings, done) => new AgentViewPanel(tui, theme, done), {
-		overlay: true,
-		overlayOptions: CENTER_OVERLAY,
-	});
+export async function openAgentView(ctx: {
+	ui: Pick<ExtensionUIContext, "custom">;
+	hasUI?: boolean;
+}): Promise<{ agentId: string } | undefined> {
+	return ctx.ui.custom<{ agentId: string } | undefined>(
+		(tui, theme, _keybindings, done) => new AgentViewPanel(tui, theme, done),
+		{
+			overlay: true,
+			overlayOptions: CENTER_OVERLAY,
+		},
+	);
 }

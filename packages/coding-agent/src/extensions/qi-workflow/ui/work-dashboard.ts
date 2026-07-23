@@ -28,7 +28,7 @@ import {
 } from "../domain/index.ts";
 import { jobManager } from "../runtime/job-manager.ts";
 import { renderBoxPanel } from "./chrome.ts";
-import { CENTER_OVERLAY, termCols } from "./layout.ts";
+import { CENTER_OVERLAY, panelMaxHeight, termCols, tuiRows } from "./layout.ts";
 import { colorStatus } from "./status-color.ts";
 import { statusGlyph, todoStatusGlyph } from "./status-icons.ts";
 
@@ -604,6 +604,7 @@ class WorkDashboard implements Component {
 			width: w,
 			body,
 			footer: [th.fg("dim", hints)],
+			maxHeight: panelMaxHeight(tuiRows(this.tui), "modal"),
 		});
 
 		this.cachedWidth = width;
