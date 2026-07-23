@@ -49,6 +49,7 @@ import {
 	getDocsPath,
 	getModelsPath,
 	getShareViewerUrl,
+	UPDATE_REPO,
 	VERSION,
 } from "../../config.ts";
 import { type AgentSession, type AgentSessionEvent, parseSkillBlock } from "../../core/agent-session.ts";
@@ -1062,6 +1063,11 @@ export class InteractiveMode {
 		}
 
 		if (!isInstallTelemetryEnabled(this.settingsManager)) {
+			return;
+		}
+
+		// Fork distributions do not report installs to the upstream pi.dev endpoint.
+		if (UPDATE_REPO) {
 			return;
 		}
 
