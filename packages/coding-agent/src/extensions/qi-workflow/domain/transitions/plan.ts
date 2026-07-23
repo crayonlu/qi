@@ -57,7 +57,9 @@ export function updatePlanSections(
 	patch: Partial<PlanSections>,
 	expectedRevision?: number,
 ): TransitionResult<Plan> {
-	if (!state.plan || state.plan.status === "discarded") return fail(state, "No active plan");
+	if (!state.plan || state.plan.status === "discarded") {
+		return fail(state, "No active plan — run /plan <goal> first (plan_update cannot start a plan)");
+	}
 	if (state.plan.status !== "draft" && state.plan.status !== "ready") {
 		return fail(state, `Cannot update sections in status ${state.plan.status}`);
 	}

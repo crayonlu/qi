@@ -27,8 +27,22 @@ import {
 	type WorkflowEntity,
 } from "../domain/index.ts";
 import { jobManager } from "../runtime/job-manager.ts";
+import { renderBoxPanel } from "./chrome.ts";
 import { CENTER_OVERLAY, termCols } from "./layout.ts";
 import { colorStatus } from "./status-color.ts";
+import { todoStatusGlyph } from "./status-icons.ts";
+
+function listGlyph(theme: Theme, tab: DashboardTab, status: string): string {
+	if (tab === "todo") return colorStatus(theme, status, todoStatusGlyph(status));
+	return colorStatus(theme, status, "●");
+}
+
+function listTitle(theme: Theme, tab: DashboardTab, status: string, title: string, focused: boolean): string {
+	const done = status === "completed" || status === "cancelled";
+	let text = theme.fg(focused ? "accent" : done ? "dim" : "text", title);
+	if (tab === "todo" && done) text = theme.strikethrough(text);
+	return focused && !done ? theme.bold(text) : text;
+}
 
 export type DashboardTab = "plan" | "todo" | "workflow" | "task" | "job";
 
@@ -499,10 +513,10 @@ class WorkDashboard implements Component {
 		if (this.cachedLines && this.cachedWidth === width) return this.cachedLines;
 		const th = this.theme;
 		const w = Math.max(1, width);
-		const lines: string[] = [];
 		const items = this.items();
+		const body: string[] = [];
+		const wide = w >= 80;
 
-		lines.push(th.fg("accent", "─".repeat(w)));
 		const tabBar = TABS.map((t) => {
 			let label = TAB_LABEL[t];
 			if (t === "todo") {
@@ -516,27 +530,26 @@ class WorkDashboard implements Component {
 			}
 			return t === this.tab ? th.fg("accent", `[${label}]`) : th.fg("dim", label);
 		}).join(" ");
-		lines.push(truncateToWidth(tabBar, w));
-		lines.push("");
-
-		const wide = w >= 80;
+		body.push(tabBar);
+		body.push("");
 
 		if (this.oneColumnDetail) {
-			lines.push(...this.renderDetail(w));
+			body.push(...this.renderDetail(Math.max(20, w - 6)));
 		} else if (wide) {
 			const listWidth = Math.min(40, Math.floor(w * 0.42));
-			const detailWidth = Math.max(20, w - listWidth - 3);
+			const detailWidth = Math.max(20, w - listWidth - 5);
 			const maxRows = Math.max(1, Math.min(items.length || 1, 14));
 			const start = items.length === 0 ? 0 : Math.max(0, Math.min(this.index - 5, items.length - maxRows));
+			const div = th.fg("borderMuted", " │ ");
 
 			if (items.length === 0) {
 				const emptyHint =
-					this.tab === "todo" ? "  (no todos — completed items stay listed here after /todos done)" : "  (empty)";
+					this.tab === "todo" ? "(no todos — completed items stay listed after /todos done)" : "(empty)";
 				const left = truncateToWidth(th.fg("dim", emptyHint), listWidth);
 				const rightLines = this.renderDetail(detailWidth);
-				lines.push(truncateToWidth(`${left} │ ${rightLines[0] ?? ""}`, w));
+				body.push(truncateToWidth(`${left}${div}${rightLines[0] ?? ""}`, Math.max(1, w - 4)));
 				for (let i = 1; i < rightLines.length; i++) {
-					lines.push(truncateToWidth(`${" ".repeat(listWidth)} │ ${rightLines[i]}`, w));
+					body.push(truncateToWidth(`${" ".repeat(listWidth)}${div}${rightLines[i]}`, Math.max(1, w - 4)));
 				}
 			} else {
 				const detailLines = this.renderDetail(detailWidth);
@@ -546,36 +559,32 @@ class WorkDashboard implements Component {
 					if (i < items.length && row < maxRows) {
 						const it = items[i]!;
 						const focused = i === this.index;
-						const prefix = focused ? th.fg("accent", "> ") : "  ";
+						const prefix = focused ? th.fg("accent", "▸ ") : "  ";
 						left = truncateToWidth(
 							prefix +
-								colorStatus(th, it.status, "●") +
+								listGlyph(th, this.tab, it.status) +
 								" " +
-								th.fg(
-									focused ? "accent" : it.status === "completed" || it.status === "cancelled" ? "dim" : "text",
-									it.title,
-								) +
+								listTitle(th, this.tab, it.status, it.title, focused) +
 								(it.meta ? th.fg("dim", ` ${it.meta}`) : ""),
 							listWidth,
 						);
 					}
 					const right = detailLines[row] ?? "";
-					lines.push(truncateToWidth(`${left} │ ${right}`, w));
+					body.push(truncateToWidth(`${left}${div}${right}`, Math.max(1, w - 4)));
 				}
 			}
 		} else {
-			// 60-79: one-column list; Enter opens detail
 			if (items.length === 0) {
-				lines.push(truncateToWidth(th.fg("dim", "  (empty)"), w));
+				body.push(th.fg("dim", "(empty)"));
 			} else {
 				for (let i = 0; i < items.length; i++) {
 					const it = items[i]!;
 					const focused = i === this.index;
-					const prefix = focused ? th.fg("accent", "> ") : "  ";
-					lines.push(
+					const prefix = focused ? th.fg("accent", "▸ ") : "  ";
+					body.push(
 						truncateToWidth(
-							`${prefix}${colorStatus(th, it.status, "●")} ${th.fg(focused ? "accent" : "text", it.title)}`,
-							w,
+							`${prefix}${listGlyph(th, this.tab, it.status)} ${listTitle(th, this.tab, it.status, it.title, focused)}`,
+							Math.max(1, w - 4),
 						),
 					);
 				}
@@ -583,16 +592,19 @@ class WorkDashboard implements Component {
 		}
 
 		if (this.message) {
-			lines.push("");
-			lines.push(truncateToWidth(th.fg("warning", this.message), w));
+			body.push("");
+			body.push(th.fg("warning", this.message));
 		}
 
-		lines.push("");
 		const hints = wide
 			? "Tab/[ ] tabs · ↑↓ · a/Enter action · Esc close"
 			: "Tab tabs · ↑↓ · Enter detail · a action · Esc back/close";
-		lines.push(truncateToWidth(th.fg("dim", hints), w));
-		lines.push(th.fg("accent", "─".repeat(w)));
+		const lines = renderBoxPanel(th, {
+			title: "Qi Work",
+			width: w,
+			body,
+			footer: [th.fg("dim", hints)],
+		});
 
 		this.cachedWidth = width;
 		this.cachedLines = lines;

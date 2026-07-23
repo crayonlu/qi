@@ -9,6 +9,7 @@ import {
 	type CleanupReport,
 	setCleanupReport,
 } from "../domain/index.ts";
+import { renderBoxPanel } from "./chrome.ts";
 import { CENTER_OVERLAY, termCols } from "./layout.ts";
 
 export interface CleanupPanelApi {
@@ -147,52 +148,52 @@ class CleanupPanel implements Component {
 		const th = this.theme;
 		const w = Math.max(1, width);
 		const report = this.report();
-		const lines: string[] = [];
+		const body: string[] = [];
 
-		lines.push(th.fg("accent", "─".repeat(w)));
-		lines.push(truncateToWidth(th.fg("accent", " Cleanup "), w));
-		lines.push(
-			truncateToWidth(
-				th.fg("muted", report?.applied ? "applied" : report ? "dry run" : this.loading ? "scanning…" : "no report"),
-				w,
-			),
+		body.push(
+			th.fg("muted", report?.applied ? "applied" : report ? "dry run" : this.loading ? "scanning…" : "no report"),
 		);
-		lines.push("");
+		body.push("");
 
 		const cats = report?.categories ?? [];
 		if (cats.length === 0 && !this.loading) {
-			lines.push(truncateToWidth(th.fg("dim", "Nothing to clean"), w));
+			body.push(th.fg("dim", "Nothing to clean"));
 		}
 
 		for (let i = 0; i < cats.length; i++) {
 			const cat = cats[i]!;
 			const focused = i === this.index;
-			const prefix = focused ? th.fg("accent", "> ") : "  ";
+			const prefix = focused ? th.fg("accent", "▸ ") : "  ";
 			const head = `${cat.label}  count=${cat.count}  size=${formatBytes(cat.bytes)}  paths=${cat.paths.length}`;
-			lines.push(truncateToWidth(prefix + th.fg(focused ? "accent" : "text", head), w));
+			body.push(truncateToWidth(prefix + th.fg(focused ? "accent" : "text", head), Math.max(1, w - 4)));
 			if (focused && this.showPaths) {
 				for (const path of cat.paths.slice(0, 8)) {
-					lines.push(truncateToWidth(`    ${th.fg("dim", path)}`, w));
+					body.push(truncateToWidth(`    ${th.fg("dim", path)}`, Math.max(1, w - 4)));
 				}
 				if (cat.paths.length > 8) {
-					lines.push(truncateToWidth(th.fg("dim", `    … +${cat.paths.length - 8} more`), w));
+					body.push(th.fg("dim", `    … +${cat.paths.length - 8} more`));
 				}
 			}
 		}
 
 		if (this.confirming) {
-			lines.push("");
-			lines.push(...wrapTextWithAnsi(th.fg("warning", "Apply cleanup and delete candidates? [y/N]"), w));
+			body.push("");
+			body.push(
+				...wrapTextWithAnsi(th.fg("warning", "Apply cleanup and delete candidates? [y/N]"), Math.max(1, w - 4)),
+			);
 		}
 
 		if (this.message) {
-			lines.push("");
-			lines.push(truncateToWidth(th.fg("warning", this.message), w));
+			body.push("");
+			body.push(th.fg("warning", this.message));
 		}
 
-		lines.push("");
-		lines.push(truncateToWidth(th.fg("dim", "↑↓ · p paths · a apply (confirm) · Esc close"), w));
-		lines.push(th.fg("accent", "─".repeat(w)));
+		const lines = renderBoxPanel(th, {
+			title: "Cleanup",
+			width: w,
+			body,
+			footer: [th.fg("dim", "↑↓ · p paths · a apply (confirm) · Esc close")],
+		});
 
 		this.cachedWidth = width;
 		this.cachedLines = lines;

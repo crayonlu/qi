@@ -201,7 +201,8 @@ export function startBtw(
 	if (state.question?.status === "open") return fail(state, "Structured question has priority over /btw");
 	const trimmed = question.trim();
 	if (!trimmed) return fail(state, "btw question is required");
-	const history = priorHistory && priorHistory.length > 0 ? priorHistory : [{ role: "user" as const, text: trimmed }];
+	// Prior questions only — current question lives in `btw.question` (rpiv echo layout).
+	const history = (priorHistory ?? []).filter((t) => t.role === "user" && t.text.trim() !== trimmed);
 	const btw: BtwDraft = {
 		question: trimmed,
 		history,
@@ -215,7 +216,19 @@ export function updateBtwAnswer(state: QiWorkflowState, answer: string): Transit
 	const btw: BtwDraft = {
 		...state.btw,
 		answer,
-		history: [...state.btw.history, { role: "assistant", text: answer }],
+		error: undefined,
+		// Keep history as prior questions only — answer renders from `btw.answer`.
+		history: state.btw.history,
+	};
+	return ok({ ...state, btw }, btw);
+}
+
+export function updateBtwError(state: QiWorkflowState, error: string): TransitionResult<BtwDraft> {
+	if (!state.btw) return fail(state, "No active /btw draft");
+	const btw: BtwDraft = {
+		...state.btw,
+		error,
+		answer: undefined,
 	};
 	return ok({ ...state, btw }, btw);
 }

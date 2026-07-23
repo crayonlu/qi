@@ -160,6 +160,9 @@ export interface StructuredQuestion extends EntityMeta {
 export interface BtwDraft {
 	question: string;
 	answer?: string;
+	/** Inline overlay error (shown instead of answer). */
+	error?: string;
+	/** Prior /btw questions only (not the current question or answers). */
 	history: Array<{ role: "user" | "assistant"; text: string }>;
 	hiddenByQuestion: boolean;
 }

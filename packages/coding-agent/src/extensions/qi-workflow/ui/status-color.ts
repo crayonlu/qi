@@ -11,12 +11,14 @@ export type StatusLike = string;
 export function statusThemeColor(status: StatusLike): ThemeColor {
 	switch (status) {
 		case "running":
-		case "in_progress":
 		case "active":
 		case "executing":
 		case "connecting":
 		case "terminating":
 			return "accent";
+		case "in_progress":
+			// Active work attention (rpiv-todo uses warning for ◐)
+			return "warning";
 		case "waiting":
 		case "pending":
 		case "draft":

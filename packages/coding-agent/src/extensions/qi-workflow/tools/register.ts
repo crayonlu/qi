@@ -225,7 +225,11 @@ export function registerQiWorkflowTools(pi: ExtensionAPI): void {
 		name: "plan_update",
 		label: "Plan Update",
 		description:
-			"Patch plan sections (discoveries, assumptions, decisions, steps, verification, unresolvedQuestions). Resets plan to draft. Optional revision for optimistic concurrency.",
+			"Patch plan sections (discoveries, assumptions, decisions, steps, verification, unresolvedQuestions). Resets plan to draft. Requires an active plan from /plan <goal> first — this tool cannot create a plan. Optional revision for optimistic concurrency.",
+		promptGuidelines: [
+			"Requires an active plan. If you get 'No active plan', ask the user to run /plan <goal> (or wait until they do) before calling plan_update.",
+			"Do not invent plan_start — plans are started only via /plan.",
+		],
 		parameters: Type.Object({
 			discoveries: Type.Optional(Type.Array(Type.String())),
 			assumptions: Type.Optional(Type.Array(Type.String())),

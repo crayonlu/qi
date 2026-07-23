@@ -14,6 +14,7 @@
 - Fixed compaction and branch-summary requests to use fresh routing session IDs with prompt caching disabled where supported.
 - Fixed explicit self-updates when `PI_SKIP_VERSION_CHECK` is set ([#6977](https://github.com/earendil-works/pi/issues/6977)).
 
+
 ## [0.81.1] - 2026-07-21
 
 ### New Features
@@ -26,6 +27,10 @@
 - Added deterministic, checksummed source archives to GitHub releases with documented standalone binary rebuild instructions ([#6913](https://github.com/earendil-works/pi/pull/6913) by [@christianklotz](https://github.com/christianklotz)).
 
 ### Fixed
+
+- Polished Qi workflow overlay chrome: boxed MCP/dashboard/rewind/cleanup panels with padding, semantic borders, and status glyphs.
+- `/btw` now renders Markdown answers, uses a banner layout without duplicated Q/A, and reads the live main-thread branch for context.
+- Clarified subagent vs skill names and `plan_update` bootstrap errors.
 
 - Fixed compaction and branch summarization to retry transient provider failures using the configured retry policy, with retry lifecycle events exposed to interactive, JSON, RPC, and SDK consumers ([#6901](https://github.com/earendil-works/pi/pull/6901) by [@davidbrai](https://github.com/davidbrai)).
 - Fixed interactive startup waiting for background model catalog refresh while computing the footer provider count.

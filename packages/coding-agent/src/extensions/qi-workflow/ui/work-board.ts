@@ -10,8 +10,9 @@ import type { ExtensionUIContext } from "../../../core/extensions/types.ts";
 import type { Theme } from "../../../modes/interactive/theme/theme.ts";
 import type { WorkflowController } from "../controller.ts";
 import type { JobEntity, QiWorkflowState, TaskEntity, TodoItem } from "../domain/index.ts";
+import { CHROME } from "./chrome.ts";
 import { colorStatus } from "./status-color.ts";
-import { goalIcon, ICONS, planIcon } from "./status-icons.ts";
+import { goalIcon, ICONS, planIcon, todoStatusGlyph } from "./status-icons.ts";
 
 export const QI_BOARD_WIDGET_KEY = "qi-board";
 
@@ -47,22 +48,16 @@ export function hasActiveWork(state: QiWorkflowState): boolean {
 	return false;
 }
 
-function formatTodoChip(t: TodoItem): string {
-	const mark =
-		t.status === "in_progress" ? ICONS.todoActive : t.status === "blocked" ? ICONS.todoBlocked : ICONS.todos;
+function formatTodoChip(theme: Theme, t: TodoItem): string {
+	const mark = colorStatus(theme, t.status, todoStatusGlyph(t.status));
 	const label = t.status === "in_progress" && t.activeForm ? t.activeForm : t.text;
-	const deps = t.blockedBy && t.blockedBy.length > 0 ? `${ICONS.rewind}${t.blockedBy.join(",")}` : "";
-	return `${mark}${label}${deps}`;
-}
-
-function compactTodos(todos: TodoItem[]): string {
-	const unfinished = todos.filter(isUnfinishedTodo).sort((a, b) => {
-		const rank = (s: string) => (s === "blocked" ? 0 : s === "in_progress" ? 1 : 2);
-		return rank(a.status) - rank(b.status) || a.position - b.position;
-	});
-	if (unfinished.length === 0) return "";
-	// Keep every unfinished chip (blocked first). Width truncate only at render.
-	return unfinished.map(formatTodoChip).join(" · ");
+	const subject =
+		t.status === "completed" || t.status === "cancelled"
+			? theme.strikethrough(theme.fg("dim", label))
+			: theme.fg("text", label);
+	const deps =
+		t.blockedBy && t.blockedBy.length > 0 ? theme.fg("dim", ` ${ICONS.todoDeps} #${t.blockedBy.join(",#")}`) : "";
+	return `${mark} ${subject}${deps}`;
 }
 
 function goalUsageBits(state: QiWorkflowState, theme: Theme): string {
@@ -134,8 +129,21 @@ export function buildBoardLines(state: QiWorkflowState, theme: Theme, collapsed:
 	}
 
 	if (unfinished.length > 0) {
-		const compact = compactTodos(state.todos);
-		lines.push(`${theme.fg("muted", `${ICONS.todos}todos`)} ${theme.fg("text", compact)}`);
+		const headingDone = state.todos.filter((t) => t.status === "completed").length;
+		const headingTotal = headingDone + unfinished.length;
+		const headingIcon = unfinished.some((t) => t.status === "in_progress")
+			? theme.fg("warning", "●")
+			: theme.fg("dim", "○");
+		lines.push(`${headingIcon} ${theme.fg("muted", `Todos (${headingDone}/${headingTotal})`)}`);
+		const visible = unfinished.slice(0, 12);
+		for (let i = 0; i < visible.length; i++) {
+			const t = visible[i]!;
+			const branch = i === visible.length - 1 ? CHROME.treeLast : CHROME.treeBranch;
+			lines.push(`${theme.fg("dim", branch)} ${formatTodoChip(theme, t)}`);
+		}
+		if (unfinished.length > visible.length) {
+			lines.push(theme.fg("dim", `${CHROME.treeLast} +${unfinished.length - visible.length} more`));
+		}
 	}
 
 	if (activeTasks.length > 0) {
@@ -150,6 +158,7 @@ export function buildBoardLines(state: QiWorkflowState, theme: Theme, collapsed:
 		lines.push(`${colorStatus(theme, job.status, `${ICONS.jobs}job`)} ${theme.fg("text", job.name)}${more}`);
 	}
 
+	if (lines.length > 0) lines.push(""); // trailing spacer (rpiv-todo) so board isn't flush on the editor
 	return lines.length > 0 ? lines : undefined;
 }
 

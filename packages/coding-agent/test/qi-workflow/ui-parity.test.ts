@@ -17,6 +17,9 @@ import type { Theme } from "../../src/modes/interactive/theme/theme.ts";
 function fakeTheme(): Theme {
 	return {
 		fg: (_color: string, text: string) => text,
+		bg: (_color: string, text: string) => text,
+		bold: (text: string) => text,
+		strikethrough: (text: string) => text,
 	} as unknown as Theme;
 }
 
@@ -237,7 +240,7 @@ describe("qi-workflow UI projections", () => {
 		expect(text).toContain("todos=1");
 		expect(text).toContain("mcp=");
 		expect(text).toContain("rw=1");
-		expect(text).toMatch(/[◉✔☐●←]/);
+		expect(text).toMatch(/[◉✔○●←]/);
 	});
 
 	it("footer puts fail and blocked ahead of routine signals", () => {
