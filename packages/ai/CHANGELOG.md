@@ -6,11 +6,6 @@
 
 - Fixed OpenRouter Anthropic cache breakpoints to advance through tool results and enabled cache control for `~anthropic/*-latest` aliases ([#6941](https://github.com/earendil-works/pi/pull/6941) by [@mteam88](https://github.com/mteam88)).
 
-## [0.81.2] - 2026-07-23
-
-### Fixed
-
-- Version bump aligned with coding-agent 0.81.2.
 
 ## [0.81.1] - 2026-07-21
 

@@ -1,12 +1,12 @@
 {
 	"name": "@earendil-works/pi-coding-agent",
-	"version": "0.81.2",
+	"version": "0.81.1",
 	"lockfileVersion": 3,
 	"requires": true,
 	"packages": {
 		"": {
 			"name": "@earendil-works/pi-coding-agent",
-			"version": "0.81.2",
+			"version": "0.81.1",
 			"license": "MIT",
 			"dependencies": {
 				"@earendil-works/pi-agent-core": "^0.81.1",
@@ -477,8 +477,8 @@
 			}
 		},
 		"node_modules/@earendil-works/pi-agent-core": {
-			"version": "0.81.2",
-			"resolved": "https://registry.npmjs.org/@earendil-works/pi-agent-core/-/pi-agent-core-0.81.2.tgz",
+			"version": "0.81.1",
+			"resolved": "https://registry.npmjs.org/@earendil-works/pi-agent-core/-/pi-agent-core-0.81.1.tgz",
 			"license": "MIT",
 			"dependencies": {
 				"@earendil-works/pi-ai": "^0.81.1",
@@ -492,8 +492,8 @@
 			}
 		},
 		"node_modules/@earendil-works/pi-ai": {
-			"version": "0.81.2",
-			"resolved": "https://registry.npmjs.org/@earendil-works/pi-ai/-/pi-ai-0.81.2.tgz",
+			"version": "0.81.1",
+			"resolved": "https://registry.npmjs.org/@earendil-works/pi-ai/-/pi-ai-0.81.1.tgz",
 			"license": "MIT",
 			"dependencies": {
 				"@anthropic-ai/sdk": "0.91.1",
@@ -516,8 +516,8 @@
 			}
 		},
 		"node_modules/@earendil-works/pi-tui": {
-			"version": "0.81.2",
-			"resolved": "https://registry.npmjs.org/@earendil-works/pi-tui/-/pi-tui-0.81.2.tgz",
+			"version": "0.81.1",
+			"resolved": "https://registry.npmjs.org/@earendil-works/pi-tui/-/pi-tui-0.81.1.tgz",
 			"license": "MIT",
 			"dependencies": {
 				"get-east-asian-width": "1.6.0",

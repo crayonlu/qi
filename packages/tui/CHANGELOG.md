@@ -2,11 +2,6 @@
 
 ## [Unreleased]
 
-## [0.81.2] - 2026-07-23
-
-### Fixed
-
-- Version bump aligned with coding-agent 0.81.2.
 
 ## [0.81.1] - 2026-07-21
 
