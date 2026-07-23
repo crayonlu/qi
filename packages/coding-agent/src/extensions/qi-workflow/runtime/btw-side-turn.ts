@@ -12,21 +12,21 @@ import type { ExtensionAPI, ExtensionCommandContext, ExtensionContext } from "..
 import { convertToLlm } from "../../../core/messages.ts";
 import type { SessionEntry } from "../../../core/session-manager.ts";
 import { workflowController } from "../controller.ts";
-import { clearBtw, startBtw, updateBtwAnswer } from "../domain/index.ts";
+import { clearBtw, startBtw, updateBtwAnswer, updateBtwError } from "../domain/index.ts";
 
 export const BTW_STATE_KEY = Symbol.for("qi-btw");
 export const CROSS_SESSION_HINT_LIMIT = 10;
 
 /** Upstream system prompt text (rpiv-btw prompts/btw-system.txt). */
-export const BTW_SYSTEM_PROMPT = `You are answering a quick side question while the user's main pi session continues working.
+export const BTW_SYSTEM_PROMPT = `You are answering a quick side question on a side channel while the user's MAIN pi session continues working in the foreground.
 
-You are given the user's primary conversation as the message context — treat it as background. Do NOT try to "continue" the assistant's prior work or pick up a tool call mid-flight; the side question is its own self-contained ask.
+You receive the main conversation branch as message context — treat it as background about what the main agent was doing. Do NOT continue the main agent's work, do NOT pick up a tool call mid-flight, and do NOT claim you cannot see prior context when the branch messages are present.
 
-Answer directly and concisely. Prefer compact bullets or short paragraphs. Cite files, functions, and line numbers when grounding a claim in the context. If the context is insufficient to answer, say so briefly instead of guessing.
+Answer the side question directly and concisely in Markdown (short paragraphs, bullets, or fenced code when useful). Cite files, functions, and line numbers when grounding a claim. If the context is insufficient, say so briefly instead of guessing.
 
-You have NO tools available. You will NOT call tools, even if the prior assistant turns demonstrate tool use. Reply in plain text only.
+You have NO tools. You will NOT call tools, even if prior assistant turns show tool use.
 
-When a "Recent /btw questions across sessions" appendix is present below, treat it as a high-level pattern hint about what the user has been thinking about lately — useful only when the side question explicitly asks about patterns, trends, or recent topics.`;
+When a "Recent /btw questions across sessions" appendix is present below, treat it as a high-level pattern hint — useful only when the side question asks about patterns, trends, or recent topics.`;
 
 const MSG_NO_MODEL = "/btw requires an active model";
 const ERR_EMPTY_RESPONSE = "/btw returned no text content.";
@@ -132,10 +132,15 @@ function getCrossSessionHint(): string {
 }
 
 function readBranchMessages(ctx: ExtensionContext): Message[] {
-	const cached = getSnapshot(ctx);
-	if (cached) return cached.messages;
-	const branch = ctx.sessionManager.getBranch() as SessionEntry[];
-	return branchToMessages(branch);
+	// Always prefer the live branch so /btw mid-tool-turn sees current main-thread work.
+	// Snapshots remain for lifecycle bookkeeping but must not stale the side-turn context.
+	try {
+		const branch = ctx.sessionManager.getBranch() as SessionEntry[];
+		return branchToMessages(branch);
+	} catch {
+		const cached = getSnapshot(ctx);
+		return cached?.messages ?? [];
+	}
 }
 
 function buildBtwMessages(ctx: ExtensionContext, userMessage: UserMessage): Message[] {
@@ -150,15 +155,12 @@ function buildSystemPrompt(): string {
 	return BTW_SYSTEM_PROMPT + getCrossSessionHint();
 }
 
-function projectHistoryForUi(
-	ctx: ExtensionContext,
-	question: string,
-): Array<{ role: "user" | "assistant"; text: string }> {
-	const prior = getSessionHistory(ctx).flatMap((t) => [
-		{ role: "user" as const, text: userMessageText(t.userMessage) },
-		{ role: "assistant" as const, text: assistantMessageText(t.assistantMessage) },
-	]);
-	return [...prior, { role: "user", text: question }];
+function projectHistoryForUi(ctx: ExtensionContext): Array<{ role: "user" | "assistant"; text: string }> {
+	// Overlay history = prior /btw questions only (rpiv echo layout).
+	return getSessionHistory(ctx).map((t) => ({
+		role: "user" as const,
+		text: userMessageText(t.userMessage),
+	}));
 }
 
 /**
@@ -264,7 +266,7 @@ export async function runBtwSideTurn(question: string, options: BtwSideTurnOptio
 		throw new Error(MSG_NO_MODEL);
 	}
 
-	const priorUi = projectHistoryForUi(ctx, question.trim());
+	const priorUi = projectHistoryForUi(ctx);
 	const started = workflowController.apply((state) => startBtw(state, question.trim(), priorUi));
 	if (!started.ok) throw new Error(started.error);
 
@@ -278,7 +280,11 @@ export async function runBtwSideTurn(question: string, options: BtwSideTurnOptio
 	try {
 		const result = await executeBtw(question.trim(), ctx, controller);
 		if (!result.ok) {
-			if ("aborted" in result) throw new Error("btw aborted");
+			if ("aborted" in result) {
+				workflowController.apply((state) => updateBtwError(state, "btw aborted"));
+				throw new Error("btw aborted");
+			}
+			workflowController.apply((state) => updateBtwError(state, result.error));
 			throw new Error(result.error);
 		}
 		pushSessionTurn(ctx, {

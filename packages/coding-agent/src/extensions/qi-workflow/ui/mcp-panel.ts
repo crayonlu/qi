@@ -5,8 +5,10 @@ import type { Theme } from "../../../modes/interactive/theme/theme.ts";
 import type { WorkflowController } from "../controller.ts";
 import type { McpServerState } from "../domain/index.ts";
 import { setMcpEnabled } from "../domain/index.ts";
+import { renderBoxPanel } from "./chrome.ts";
 import { CENTER_OVERLAY, termCols } from "./layout.ts";
 import { colorStatus } from "./status-color.ts";
+import { ICONS } from "./status-icons.ts";
 
 export interface McpPanelApi {
 	enable(name: string): Promise<void>;
@@ -25,6 +27,30 @@ const CONFIG_HINT = [
 	"  .pi/mcp.json",
 	"  ~/.pi/agent/mcp.json",
 ];
+
+function mcpGlyph(theme: Theme, status: string, enabled: boolean): string {
+	if (!enabled) return theme.fg("warning", "⊘");
+	switch (status) {
+		case "connected":
+			return theme.fg("success", ICONS.mcpOk);
+		case "connecting":
+			return theme.fg("accent", ICONS.mcpConn);
+		case "error":
+			return theme.fg("error", ICONS.mcpErr);
+		case "disconnected":
+			return theme.fg("muted", "○");
+		default:
+			return colorStatus(theme, status, ICONS.mcpOk);
+	}
+}
+
+function statusLabel(server: McpServerState): string {
+	if (!server.enabled) return "disabled";
+	if (server.status === "connected") return "connected";
+	if (server.status === "connecting") return "connecting";
+	if (server.status === "error") return "failed";
+	return server.status;
+}
 
 class McpPanel implements Component {
 	private tui: TUI;
@@ -122,13 +148,13 @@ class McpPanel implements Component {
 				this.refresh();
 				return;
 			}
-			if (matchesKey(data, "backspace")) {
+			if (matchesKey(data, "backspace") || data === "\x7f") {
 				this.filter = this.filter.slice(0, -1);
 				this.index = 0;
 				this.refresh();
 				return;
 			}
-			if (data.length === 1 && data.charCodeAt(0) >= 32) {
+			if (data.length === 1 && data >= " ") {
 				this.filter += data;
 				this.index = 0;
 				this.refresh();
@@ -146,21 +172,18 @@ class McpPanel implements Component {
 			this.done();
 			return;
 		}
-
 		if (data === "/" || data === "f" || data === "F") {
 			this.filterMode = true;
 			this.refresh();
 			return;
 		}
-
-		const list = this.servers();
-		if (matchesKey(data, "up")) {
+		if (matchesKey(data, "up") || data === "k") {
 			this.index = Math.max(0, this.index - 1);
 			this.refresh();
 			return;
 		}
-		if (matchesKey(data, "down")) {
-			this.index = Math.min(Math.max(0, list.length - 1), this.index + 1);
+		if (matchesKey(data, "down") || data === "j") {
+			this.index = Math.min(Math.max(0, this.servers().length - 1), this.index + 1);
 			this.refresh();
 			return;
 		}
@@ -176,47 +199,47 @@ class McpPanel implements Component {
 
 	render(width: number): string[] {
 		if (this.cachedLines && this.cachedWidth === width) return this.cachedLines;
+
 		const th = this.theme;
 		const w = Math.max(1, width);
 		const servers = this.servers();
 		const wide = w >= 80;
-		const lines: string[] = [];
+		const body: string[] = [];
 
-		lines.push(th.fg("accent", "─".repeat(w)));
-		lines.push(truncateToWidth(th.fg("accent", " MCP "), w));
 		if (this.filter || this.filterMode) {
 			const cursor = this.filterMode ? th.fg("accent", "▌") : "";
-			lines.push(truncateToWidth(th.fg("muted", `filter: ${this.filter}${cursor}`), w));
+			body.push(th.fg("muted", `◎  ${this.filter}${cursor}`) || th.fg("dim", "◎  search…"));
+			body.push("");
 		}
-		lines.push("");
 
 		if (servers.length === 0) {
 			for (const line of CONFIG_HINT) {
-				lines.push(truncateToWidth(th.fg("muted", line), w));
+				body.push(th.fg("dim", line));
 			}
 		} else if (this.detailMode || !wide) {
 			const server = servers[this.index];
 			if (server) {
-				lines.push(
-					truncateToWidth(`${colorStatus(th, server.status, server.status)} ${th.fg("text", server.name)}`, w),
+				const label = statusLabel(server);
+				body.push(
+					`${mcpGlyph(th, server.status, server.enabled)} ${th.bold(th.fg("text", server.name))}  ${colorStatus(th, label, label)}`,
 				);
-				lines.push(truncateToWidth(th.fg("muted", `transport ${server.transport} · tools ${server.toolCount}`), w));
-				if (server.sourcePath) {
-					lines.push(truncateToWidth(th.fg("dim", server.sourcePath), w));
-				}
+				body.push(th.fg("muted", `${server.transport} · tools ${server.toolCount}`));
+				if (server.sourcePath) body.push(th.fg("dim", server.sourcePath));
 				if (server.error) {
-					lines.push(...wrapTextWithAnsi(th.fg("error", server.error), w));
+					for (const line of wrapTextWithAnsi(th.fg("error", server.error), Math.max(20, w - 6))) {
+						body.push(line);
+					}
 				}
 				if (this.inspectText) {
-					lines.push("");
-					for (const line of this.inspectText.split("\n").slice(0, 20)) {
-						lines.push(truncateToWidth(th.fg("text", line), w));
+					body.push("");
+					for (const line of this.inspectText.split("\n").slice(0, 18)) {
+						body.push(th.fg("text", line));
 					}
 				}
 			}
 		} else {
-			const listWidth = Math.min(36, Math.floor(w * 0.4));
-			const detailWidth = w - listWidth - 3;
+			const listWidth = Math.min(34, Math.floor(w * 0.38));
+			const detailWidth = Math.max(20, w - listWidth - 5);
 			const maxRows = Math.max(1, Math.min(servers.length, 12));
 			const start = Math.max(0, Math.min(this.index - 5, servers.length - maxRows));
 			for (let row = 0; row < maxRows; row++) {
@@ -224,40 +247,39 @@ class McpPanel implements Component {
 				const server = servers[i];
 				if (!server) break;
 				const focused = i === this.index;
-				const prefix = focused ? th.fg("accent", "> ") : "  ";
+				const prefix = focused ? th.fg("accent", "▸ ") : "  ";
+				const name = th.fg(focused ? "accent" : "text", focused ? th.bold(server.name) : server.name);
 				const left = truncateToWidth(
-					`${prefix}${colorStatus(th, server.status, "●")} ${th.fg(focused ? "accent" : "text", server.name)}`,
+					`${prefix}${mcpGlyph(th, server.status, server.enabled)} ${name}${server.enabled ? "" : th.fg("warning", " ⊘")}`,
 					listWidth,
 				);
 				let right = "";
 				if (focused) {
+					const label = statusLabel(server);
 					right = truncateToWidth(
-						th.fg("muted", `${server.transport} · tools=${server.toolCount}`) +
+						`${colorStatus(th, label, label)} · ${server.transport} · tools ${server.toolCount}` +
 							(server.error ? th.fg("error", ` · ${server.error}`) : ""),
 						detailWidth,
 					);
 				}
-				lines.push(truncateToWidth(`${left} │ ${right}`, w));
+				const div = th.fg("borderMuted", " │ ");
+				body.push(truncateToWidth(`${left}${div}${right}`, Math.max(1, w - 4)));
 			}
 		}
 
 		if (this.message) {
-			lines.push("");
-			lines.push(truncateToWidth(th.fg("warning", this.message), w));
+			body.push("");
+			body.push(th.fg("warning", this.message));
 		}
 
-		lines.push("");
-		lines.push(
-			truncateToWidth(
-				th.fg(
-					"dim",
-					"↑↓ · e enable · d disable · r reconnect · a auth · l logout · i inspect · / filter · Esc close",
-				),
-				w,
+		const footer = [
+			th.fg(
+				"dim",
+				"↑↓ navigate · e enable · d disable · r reconnect · a auth · l logout · i inspect · / filter · Esc",
 			),
-		);
-		lines.push(th.fg("accent", "─".repeat(w)));
+		];
 
+		const lines = renderBoxPanel(th, { title: "MCP Servers", width: w, body, footer });
 		this.cachedWidth = width;
 		this.cachedLines = lines;
 		return lines;

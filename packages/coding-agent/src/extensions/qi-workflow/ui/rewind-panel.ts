@@ -4,6 +4,7 @@ import type { ExtensionUIContext } from "../../../core/extensions/types.ts";
 import type { Theme } from "../../../modes/interactive/theme/theme.ts";
 import type { WorkflowController } from "../controller.ts";
 import type { RestoreScope, RewindCheckpoint } from "../domain/index.ts";
+import { renderBoxPanel } from "./chrome.ts";
 import { CENTER_OVERLAY, termCols } from "./layout.ts";
 
 export interface RewindPanelApi {
@@ -152,70 +153,70 @@ class RewindPanel implements Component {
 		const th = this.theme;
 		const w = Math.max(1, width);
 		const list = this.checkpoints();
-		const lines: string[] = [];
-
-		lines.push(th.fg("accent", "─".repeat(w)));
-		lines.push(truncateToWidth(th.fg("accent", " Rewind "), w));
-		lines.push("");
+		const body: string[] = [];
 
 		if (list.length === 0) {
-			lines.push(truncateToWidth(th.fg("dim", "No checkpoints yet"), w));
+			body.push(th.fg("dim", "No checkpoints yet"));
 		} else {
 			const wide = w >= 80;
 			for (let i = 0; i < list.length; i++) {
 				const cp = list[i]!;
 				const focused = i === this.index;
-				const prefix = focused ? th.fg("accent", "> ") : "  ";
-				const label = th.fg(focused ? "accent" : "text", cp.label);
+				const prefix = focused ? th.fg("accent", "▸ ") : "  ";
+				const label = th.fg(focused ? "accent" : "text", focused ? th.bold(cp.label) : cp.label);
 				const meta = th.fg("dim", cp.gitRef ? ` · ${cp.gitRef}` : cp.entryId ? ` · ${cp.entryId}` : "");
-				lines.push(truncateToWidth(prefix + label + meta, wide ? Math.floor(w * 0.55) : w));
+				body.push(truncateToWidth(prefix + label + meta, wide ? Math.floor(w * 0.55) : Math.max(1, w - 4)));
 				if (focused && wide) {
-					lines.push(
+					body.push(
 						truncateToWidth(
 							`    ${th.fg("muted", cp.summary)}${cp.scope ? th.fg("dim", ` · prior scope ${cp.scope}`) : ""}`,
-							w,
+							Math.max(1, w - 4),
 						),
 					);
 				}
 			}
 
-			lines.push("");
+			body.push("");
 			const scopeParts = SCOPES.map((s, i) => (i === this.scopeIndex ? th.fg("accent", `[${s}]`) : th.fg("dim", s)));
-			lines.push(truncateToWidth(`${th.fg("muted", "restore scope:")} ${scopeParts.join(" ")}`, w));
+			body.push(`${th.fg("muted", "restore scope:")} ${scopeParts.join(" ")}`);
 		}
 
 		if (this.confirming) {
 			const cp = list[this.index];
 			const scope = SCOPES[this.scopeIndex] ?? "all";
-			lines.push("");
-			lines.push(
-				...wrapTextWithAnsi(th.fg("warning", `Restore "${cp?.label ?? "?"}" with scope=${scope}? [y/N]`), w),
+			body.push("");
+			body.push(
+				...wrapTextWithAnsi(
+					th.fg("warning", `Restore "${cp?.label ?? "?"}" with scope=${scope}? [y/N]`),
+					Math.max(1, w - 4),
+				),
 			);
 			if (this.previewText) {
-				lines.push("");
-				lines.push(truncateToWidth(th.fg("muted", "preview:"), w));
+				body.push("");
+				body.push(th.fg("muted", "preview:"));
 				for (const line of this.previewText.split("\n").slice(0, 8)) {
-					lines.push(truncateToWidth(th.fg("dim", line), w));
+					body.push(th.fg("dim", line));
 				}
 			}
 		} else if (this.previewText) {
-			lines.push("");
-			lines.push(truncateToWidth(th.fg("muted", "preview:"), w));
+			body.push("");
+			body.push(th.fg("muted", "preview:"));
 			for (const line of this.previewText.split("\n").slice(0, 8)) {
-				lines.push(truncateToWidth(th.fg("dim", line), w));
+				body.push(th.fg("dim", line));
 			}
 		}
 
 		if (this.message) {
-			lines.push("");
-			lines.push(truncateToWidth(th.fg("success", this.message), w));
+			body.push("");
+			body.push(th.fg("success", this.message));
 		}
 
-		lines.push("");
-		lines.push(
-			truncateToWidth(th.fg("dim", "↑↓ checkpoint · ←→ scope · p preview · Enter restore · u undo · Esc close"), w),
-		);
-		lines.push(th.fg("accent", "─".repeat(w)));
+		const lines = renderBoxPanel(th, {
+			title: "Rewind",
+			width: w,
+			body,
+			footer: [th.fg("dim", "↑↓ checkpoint · ←→ scope · p preview · Enter restore · u undo · Esc close")],
+		});
 
 		this.cachedWidth = width;
 		this.cachedLines = lines;

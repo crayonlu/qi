@@ -33,20 +33,26 @@ export const ICONS = {
 	goalActive: "◉",
 	/** double vertical bar — paused */
 	goalPaused: "‖",
-	/** figures.warning */
-	goalBlocked: "⚠",
+	/** ASCII-safe alert (avoid emoji-presentation ⚠) */
+	goalBlocked: "!",
 	/** figures.circleDotted — draft / unset */
 	planDraft: "◌",
 	/** figures.tick */
 	planReady: "✔",
 	/** figures.pointer */
 	planExecuting: "❯",
-	/** figures.checkboxOff */
-	todos: "☐",
-	/** figures.warning */
-	todoBlocked: "⚠",
-	/** figures.pointerSmall-ish */
-	todoActive: "›",
+	/** Aggregate todos label (footer/board heading) */
+	todos: "○",
+	/** ASCII-safe blocked */
+	todoBlocked: "!",
+	/** rpiv-todo overlay: in progress */
+	todoActive: "◐",
+	/** rpiv-todo overlay: pending */
+	todoPending: "○",
+	/** rpiv-todo overlay: completed */
+	todoDone: "✔",
+	/** Dependency chain */
+	todoDeps: "⛓",
 	/** figures.arrowRight */
 	tasks: "→",
 	/** figures.squareSmallFilled — background work block */
@@ -60,6 +66,20 @@ export const ICONS = {
 	/** figures.arrowLeft — rewind / restore */
 	rewind: "←",
 } as const;
+
+export function todoStatusGlyph(status: string): string {
+	switch (status) {
+		case "in_progress":
+			return ICONS.todoActive;
+		case "blocked":
+			return ICONS.todoBlocked;
+		case "completed":
+		case "cancelled":
+			return ICONS.todoDone;
+		default:
+			return ICONS.todoPending;
+	}
+}
 
 export function goalIcon(status: string): string {
 	if (status === "blocked") return ICONS.goalBlocked;

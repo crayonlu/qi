@@ -22,6 +22,9 @@ import type { Theme } from "../../src/modes/interactive/theme/theme.ts";
 function fakeTheme(): Theme {
 	return {
 		fg: (_color: string, text: string) => text,
+		bg: (_color: string, text: string) => text,
+		bold: (text: string) => text,
+		strikethrough: (text: string) => text,
 	} as unknown as Theme;
 }
 
@@ -50,8 +53,8 @@ describe("qi-workflow TUI board/footer/overlays", () => {
 		const lines = buildBoardLines(s, theme, false);
 		expect(lines).toBeDefined();
 		expect(lines!.length).toBeGreaterThan(0);
-		// goal + plan + todos + task + job (no artificial line cap)
-		expect(lines!.length).toBeLessThanOrEqual(6);
+		// goal + plan + todos heading/rows + task + job + trailing spacer
+		expect(lines!.length).toBeLessThanOrEqual(10);
 
 		const collapsed = buildBoardLines(s, theme, true);
 		expect(collapsed).toHaveLength(1);

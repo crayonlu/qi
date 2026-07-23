@@ -14,6 +14,14 @@
 - Fixed compaction and branch-summary requests to use fresh routing session IDs with prompt caching disabled where supported.
 - Fixed explicit self-updates when `PI_SKIP_VERSION_CHECK` is set ([#6977](https://github.com/earendil-works/pi/issues/6977)).
 
+## [0.81.2] - 2026-07-23
+
+### Fixed
+
+- Polished Qi workflow overlay chrome: boxed MCP/dashboard/rewind/cleanup panels with padding, semantic borders, and status glyphs.
+- `/btw` now renders Markdown answers, uses a banner layout without duplicated Q/A, and reads the live main-thread branch for context.
+- Clarified subagent vs skill names and `plan_update` bootstrap errors.
+
 ## [0.81.1] - 2026-07-21
 
 ### New Features

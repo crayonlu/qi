@@ -392,7 +392,7 @@ export async function runSingleAgent(
 			task,
 			exitCode: 1,
 			messages: [],
-			stderr: `Unknown agent: "${agentName}". Available agents: ${available}.`,
+			stderr: `Unknown agent: "${agentName}". Available agents: ${available}. Tip: skill names (e.g. from startup Skills list) are not subagents — load skills with read; pass a registered agent name here.`,
 			usage: {
 				input: 0,
 				output: 0,

@@ -9,6 +9,7 @@ import type { ExtensionUIContext } from "../../../core/extensions/types.ts";
 import type { Theme } from "../../../modes/interactive/theme/theme.ts";
 import type { WorkflowController } from "../controller.ts";
 import { answerQuestion, cancelQuestion, type StructuredQuestion } from "../domain/index.ts";
+import { renderBanner } from "./chrome.ts";
 import { BOTTOM_OVERLAY } from "./layout.ts";
 
 export type QuestionOverlayResult =
@@ -214,11 +215,10 @@ class QuestionOverlay implements Component {
 		}
 
 		const lines: string[] = [];
-		lines.push(th.fg("accent", "─".repeat(w)));
-		if (this.question.header || progress) {
-			lines.push(...wrapTextWithAnsi(th.fg("accent", `${this.question.header ?? "Question"}${progress}`), w));
-		}
-		lines.push(...wrapTextWithAnsi(th.fg("text", this.question.prompt), w));
+		const pad = "  ";
+		lines.push(renderBanner(th, "Ask", `${this.question.header ?? "Question"}${progress}`, w));
+		lines.push("");
+		lines.push(...wrapTextWithAnsi(th.fg("text", this.question.prompt), Math.max(1, w - 4)).map((l) => pad + l));
 		lines.push("");
 
 		for (let i = 0; i < this.question.options.length; i++) {
@@ -226,14 +226,16 @@ class QuestionOverlay implements Component {
 			const focused = i === this.optionIndex && !this.freeMode && !this.notesMode;
 			const checked = this.selected.has(i);
 			const marker = this.question.multiSelect ? (checked ? "[x]" : "[ ]") : `${i + 1}.`;
-			const prefix = focused ? th.fg("accent", "> ") : "  ";
+			const prefix = focused ? th.fg("accent", "▸ ") : "  ";
 			const label = th.fg(focused ? "accent" : "text", `${marker} ${opt.label}`);
-			lines.push(truncateToWidth(prefix + label, w));
+			lines.push(truncateToWidth(pad + prefix + label, w));
 			if (opt.description) {
-				lines.push(truncateToWidth(`     ${th.fg("muted", opt.description)}`, w));
+				lines.push(truncateToWidth(`${pad}     ${th.fg("muted", opt.description)}`, w));
 			}
 			if (focused && opt.preview) {
-				for (const previewLine of wrapTextWithAnsi(th.fg("dim", `     ▸ ${opt.preview}`), w).slice(0, 6)) {
+				for (const previewLine of wrapTextWithAnsi(th.fg("dim", `     ▸ ${opt.preview}`), Math.max(1, w - 4))
+					.slice(0, 6)
+					.map((l) => pad + l)) {
 					lines.push(previewLine);
 				}
 			}
@@ -242,13 +244,13 @@ class QuestionOverlay implements Component {
 		if (this.allowFreeInput) {
 			const freeIdx = this.question.options.length;
 			const focused = this.optionIndex === freeIdx || this.freeMode;
-			const prefix = focused ? th.fg("accent", "> ") : "  ";
+			const prefix = focused ? th.fg("accent", "▸ ") : "  ";
 			const label = th.fg(focused ? "accent" : "text", `${freeIdx + 1}. Type something…`);
-			lines.push(truncateToWidth(prefix + label, w));
+			lines.push(truncateToWidth(pad + prefix + label, w));
 			if (this.freeMode) {
 				const cursor = th.fg("accent", "▌");
 				const shown = this.freeText.length === 0 ? th.fg("dim", "…") : th.fg("text", this.freeText);
-				lines.push(truncateToWidth(`  ${th.fg("muted", "answer:")} ${shown}${cursor}`, w));
+				lines.push(truncateToWidth(`${pad}  ${th.fg("muted", "answer:")} ${shown}${cursor}`, w));
 			}
 		}
 
@@ -256,7 +258,7 @@ class QuestionOverlay implements Component {
 			lines.push("");
 			const cursor = this.notesMode ? th.fg("accent", "▌") : "";
 			const shown = this.notesText.length === 0 ? th.fg("dim", "(optional notes)") : th.fg("text", this.notesText);
-			lines.push(truncateToWidth(`  ${th.fg("muted", "notes:")} ${shown}${cursor}`, w));
+			lines.push(truncateToWidth(`${pad}  ${th.fg("muted", "notes:")} ${shown}${cursor}`, w));
 		}
 
 		lines.push("");
@@ -267,8 +269,7 @@ class QuestionOverlay implements Component {
 				: this.question.multiSelect
 					? "↑↓ · Space toggle · Enter submit · n notes · c collapse · Esc cancel"
 					: "↑↓ · Enter select · n notes · c collapse · Esc cancel";
-		lines.push(truncateToWidth(th.fg("dim", hint), w));
-		lines.push(th.fg("accent", "─".repeat(w)));
+		lines.push(truncateToWidth(pad + th.fg("dim", hint), w));
 
 		const rows = (this.tui as TUI & { terminal?: { rows?: number } }).terminal?.rows ?? 24;
 		const maxRows = Math.max(6, Math.floor(rows * 0.8));

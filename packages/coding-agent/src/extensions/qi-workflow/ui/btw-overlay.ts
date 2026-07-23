@@ -1,13 +1,19 @@
 import type { Component, TUI } from "@earendil-works/pi-tui";
-import { matchesKey, truncateToWidth, wrapTextWithAnsi } from "@earendil-works/pi-tui";
+import { Markdown, matchesKey, truncateToWidth, wrapTextWithAnsi } from "@earendil-works/pi-tui";
 import type { ExtensionContext, ExtensionUIContext } from "../../../core/extensions/types.ts";
 import type { Theme } from "../../../modes/interactive/theme/theme.ts";
+import { getMarkdownTheme } from "../../../modes/interactive/theme/theme.ts";
 import type { WorkflowController } from "../controller.ts";
 import { type BtwDraft, clearBtw } from "../domain/index.ts";
 import { clearBtwHistory } from "../runtime/btw-side-turn.ts";
+import { hintLine, renderBanner, sidePadStr } from "./chrome.ts";
 import { BOTTOM_OVERLAY } from "./layout.ts";
 
 type BtwCloseResult = { attachSummary?: string };
+
+const SIDE_PAD = sidePadStr(2);
+const ANSWER_PAD = sidePadStr(4);
+const BTW_LITERAL = "/btw";
 
 class BtwOverlay implements Component {
 	private tui: TUI;
@@ -81,7 +87,8 @@ class BtwOverlay implements Component {
 			} else {
 				this.controller.apply((state) => clearBtw(state));
 			}
-			this.done({});
+			this.scrollOffset = 0;
+			this.refresh();
 			return;
 		}
 		if (data === "a" || data === "A") {
@@ -95,59 +102,89 @@ class BtwOverlay implements Component {
 		}
 	}
 
+	private historyLine(question: string, width: number): string {
+		const qAvail = Math.max(0, width - SIDE_PAD.length);
+		const qClean = question.replace(/\s+/g, " ").trim();
+		const raw = `${BTW_LITERAL} ${qClean}`;
+		return SIDE_PAD + this.theme.fg("muted", truncateToWidth(raw, qAvail, "…", false));
+	}
+
+	private echoLine(question: string, width: number): string {
+		const bodyAvail = Math.max(1, width - SIDE_PAD.length);
+		const prefixW = BTW_LITERAL.length + 1;
+		const qAvail = Math.max(0, bodyAvail - prefixW);
+		const qClean = question.replace(/\s+/g, " ").trim();
+		const qTrunc = truncateToWidth(qClean, qAvail, "…", false);
+		return `${SIDE_PAD}${this.theme.fg("accent", BTW_LITERAL)} ${this.theme.fg("muted", qTrunc)}`;
+	}
+
+	private renderMarkdownAnswer(text: string, width: number): string[] {
+		const bodyWidth = Math.max(1, width - ANSWER_PAD.length);
+		const md = new Markdown(text, 0, 0, getMarkdownTheme());
+		return md.render(bodyWidth).map((l) => ANSWER_PAD + l);
+	}
+
+	private renderPlainAnswer(text: string, width: number, color: "text" | "error" | "warning"): string[] {
+		const bodyWidth = Math.max(1, width - ANSWER_PAD.length);
+		const out: string[] = [];
+		for (const ln of text.split("\n")) {
+			const src = ln.length === 0 ? " " : ln;
+			out.push(...wrapTextWithAnsi(this.theme.fg(color, src), bodyWidth).map((l) => ANSWER_PAD + l));
+		}
+		return out;
+	}
+
 	render(width: number): string[] {
 		if (this.cachedLines && this.cachedWidth === width) return this.cachedLines;
 
 		const th = this.theme;
 		const w = Math.max(1, width);
 		const btw = this.draft();
-		const lines: string[] = [];
-
-		lines.push(th.fg("accent", "─".repeat(w)));
-		lines.push(truncateToWidth(th.fg("accent", "/btw"), w));
+		const natural: string[] = [];
 
 		if (!btw) {
-			lines.push(truncateToWidth(th.fg("dim", "No active /btw draft"), w));
+			natural.push(renderBanner(th, BTW_LITERAL, "(idle)", w));
+			natural.push("");
+			natural.push(SIDE_PAD + th.fg("dim", "No active /btw draft"));
+			natural.push("");
+			natural.push(hintLine(th, ["Esc close"], w));
 		} else {
-			lines.push(...wrapTextWithAnsi(th.fg("muted", btw.question), w));
-			lines.push("");
+			natural.push(renderBanner(th, BTW_LITERAL, btw.question, w));
+			natural.push("");
 
-			for (const turn of btw.history) {
-				const prefix = turn.role === "user" ? th.fg("accent", "you ") : th.fg("muted", "btw ");
-				lines.push(...wrapTextWithAnsi(prefix + th.fg("text", turn.text), w));
+			// Prior /btw questions only (rpiv layout) — never re-echo current Q/A.
+			const priorQs = btw.history.filter((t) => t.role === "user").map((t) => t.text);
+			for (const q of priorQs) {
+				natural.push(this.historyLine(q, w));
 			}
+			natural.push(this.echoLine(btw.question, w));
+			natural.push("");
 
 			if (btw.answer) {
-				lines.push("");
-				lines.push(...wrapTextWithAnsi(th.fg("text", btw.answer), w));
+				natural.push(...this.renderMarkdownAnswer(btw.answer, w));
+			} else if (btw.error) {
+				natural.push(...this.renderPlainAnswer(btw.error, w, "error"));
 			} else {
-				lines.push("");
-				lines.push(truncateToWidth(th.fg("dim", "… waiting for answer (Esc abort)"), w));
+				natural.push(ANSWER_PAD + th.fg("warning", "…"));
 			}
+
+			natural.push("");
+			const hints: string[] = [];
+			if (btw.answer || btw.error) hints.push("↑↓ scroll");
+			if (priorQs.length > 0) hints.push("x clear");
+			if (btw.answer) hints.push("a attach");
+			hints.push(btw.answer || btw.error ? "Esc close" : "Esc abort");
+			natural.push(hintLine(th, hints, w));
 		}
 
-		lines.push("");
-		lines.push(
-			truncateToWidth(
-				th.fg(
-					"dim",
-					btw && !btw.answer
-						? "↑↓ scroll · Esc abort · x clear"
-						: "↑↓ scroll · a attach summary · x clear · Esc close",
-				),
-				w,
-			),
-		);
-		lines.push(th.fg("accent", "─".repeat(w)));
-
 		const rows = (this.tui as TUI & { terminal?: { rows?: number } }).terminal?.rows ?? 24;
-		const maxRows = Math.max(4, Math.floor(rows * 0.8));
-		let view = lines;
-		if (lines.length > maxRows) {
-			const excess = lines.length - maxRows;
+		const maxRows = Math.max(4, Math.floor(rows * 0.85));
+		let view = natural;
+		if (natural.length > maxRows) {
+			const excess = natural.length - maxRows;
 			if (this.scrollOffset > excess) this.scrollOffset = excess;
 			const start = excess - this.scrollOffset;
-			view = lines.slice(start, start + maxRows);
+			view = natural.slice(start, start + maxRows);
 		}
 
 		this.cachedWidth = width;
@@ -179,7 +216,6 @@ export async function showBtwOverlay(
 		ctx.ui.notify("No active /btw draft", "info");
 		return;
 	}
-	// Preserve draft while hiddenByQuestion — just don't show.
 	if (state.btw.hiddenByQuestion) {
 		return;
 	}

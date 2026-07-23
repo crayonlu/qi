@@ -35,6 +35,7 @@ export default function (pi: ExtensionAPI) {
 		promptSnippet:
 			"Decide whether to spawn 0, 1, or multiple subagents for independent research, review, verification, or multi-step work in isolated Pi processes.",
 		promptGuidelines: [
+			"Subagent `agent` names are registered subagents (built-ins: scout, planner, reviewer, worker, general / general-purpose), NOT skill names from <available_skills>. Skills are instruction files loaded with `read`; never pass a skill name as subagent.agent.",
 			"Use subagent only when delegation fits; the main agent should decide how many subagents to spawn from task shape instead of waiting for the user to specify a count.",
 			"Use no subagent for simple answers, quick targeted edits, latency-sensitive one-step work, tasks requiring frequent user back-and-forth, or critical-path work needed for the main agent's next action.",
 			"A single blocking subagent call should be used only when independent context, high-volume output isolation, or an external review is worth waiting for; otherwise do the task in the main agent.",
