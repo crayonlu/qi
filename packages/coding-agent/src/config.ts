@@ -333,7 +333,8 @@ export function getSelfUpdateUnavailableInstruction(
 	const method = detectInstallMethod();
 	const target = normalizeSelfUpdatePackageTarget(updatePackageTarget);
 	if (method === "bun-binary") {
-		return `Download from: https://github.com/earendil-works/pi-mono/releases/latest`;
+		const repo = UPDATE_REPO ?? "earendil-works/pi-mono";
+		return `Download from: https://github.com/${repo}/releases/latest`;
 	}
 	const command = getSelfUpdateCommandForMethod(method, packageName, target, npmCommand);
 	if (command) {
@@ -473,6 +474,13 @@ interface PackageJson {
 	piConfig?: {
 		name?: string;
 		configDir?: string;
+		/**
+		 * GitHub repo (owner/repo) that hosts this distribution's releases.
+		 * When set, `pi update` and the startup version check use this repo's
+		 * GitHub Releases instead of the upstream pi.dev endpoint. Leave unset
+		 * to keep the default upstream behavior.
+		 */
+		updateRepo?: string;
 	};
 }
 
@@ -490,6 +498,13 @@ export const APP_NAME: string = piConfigName || "pi";
 export const APP_TITLE: string = piConfigName ? APP_NAME : "π";
 export const CONFIG_DIR_NAME: string = pkg.piConfig?.configDir || ".pi";
 export const VERSION: string = pkg.version || "0.0.0";
+
+/**
+ * GitHub repo (owner/repo) hosting this distribution's releases, when this is a
+ * fork that self-updates from its own GitHub Releases. Undefined for the default
+ * upstream build.
+ */
+export const UPDATE_REPO: string | undefined = pkg.piConfig?.updateRepo;
 
 // e.g., PI_CODING_AGENT_DIR or TAU_CODING_AGENT_DIR
 export const ENV_AGENT_DIR = `${APP_NAME.toUpperCase()}_CODING_AGENT_DIR`;

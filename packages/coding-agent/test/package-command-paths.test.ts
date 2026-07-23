@@ -2,7 +2,7 @@ import { chmodSync, existsSync, mkdirSync, readFileSync, realpathSync, rmSync, w
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { ENV_AGENT_DIR, PACKAGE_NAME, VERSION } from "../src/config.ts";
+import { ENV_AGENT_DIR, PACKAGE_NAME, UPDATE_REPO, VERSION } from "../src/config.ts";
 import { ModelRuntime } from "../src/core/model-runtime.ts";
 import type { ResolvedPaths } from "../src/core/package-manager.ts";
 import { InMemorySettingsStorage, SettingsManager } from "../src/core/settings-manager.ts";
@@ -10,6 +10,23 @@ import { ProjectTrustStore } from "../src/core/trust-manager.ts";
 import { main } from "../src/main.ts";
 import { ConfigSelectorComponent } from "../src/modes/interactive/components/config-selector.ts";
 import { handlePackageCommand } from "../src/package-manager-cli.ts";
+
+function stubDistributionVersionFetch(
+	version: string,
+	extra?: { packageName?: string; note?: string },
+): ReturnType<typeof vi.fn> {
+	return vi.fn(async (input: string | URL) => {
+		const url = String(input);
+		if (url.includes("github.com") && url.includes("/releases/latest")) {
+			const response = new Response("", { status: 200 });
+			Object.defineProperty(response, "url", {
+				value: `https://github.com/${UPDATE_REPO ?? "crayonlu/qi"}/releases/tag/v${version}`,
+			});
+			return response;
+		}
+		return Response.json({ version, ...extra });
+	});
+}
 
 describe("package commands", () => {
 	let tempDir: string;
@@ -75,6 +92,7 @@ describe("package commands", () => {
 			return undefined as never;
 		}) as typeof process.exit);
 		process.env[ENV_AGENT_DIR] = agentDir;
+		delete process.env.PI_OFFLINE;
 		process.chdir(projectDir);
 	});
 
@@ -473,7 +491,7 @@ describe("package commands", () => {
 	it("allows explicit self-update checks when automatic version checks are disabled", async () => {
 		const previousSkipVersionCheck = process.env.PI_SKIP_VERSION_CHECK;
 		process.env.PI_SKIP_VERSION_CHECK = "1";
-		const fetchMock = vi.fn(async () => Response.json({ version: VERSION }));
+		const fetchMock = stubDistributionVersionFetch(VERSION);
 		vi.stubGlobal("fetch", fetchMock);
 		const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
 		const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
@@ -524,7 +542,7 @@ else fs.writeFileSync(${JSON.stringify(recordPath)},JSON.stringify(args));
 			value: join(selfPackageDir, "dist", "cli.js"),
 			configurable: true,
 		});
-		const fetchMock = vi.fn(async () => Response.json({ version: VERSION }));
+		const fetchMock = stubDistributionVersionFetch(VERSION);
 		vi.stubGlobal("fetch", fetchMock);
 
 		const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
@@ -572,7 +590,7 @@ else fs.writeFileSync(${JSON.stringify(recordPath)},JSON.stringify(args));
 			configurable: true,
 		});
 		const targetVersion = getNewerPatchVersion();
-		const fetchMock = vi.fn(async () => Response.json({ version: targetVersion }));
+		const fetchMock = stubDistributionVersionFetch(targetVersion);
 		vi.stubGlobal("fetch", fetchMock);
 
 		const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
@@ -595,7 +613,7 @@ else fs.writeFileSync(${JSON.stringify(recordPath)},JSON.stringify(args));
 		}
 	});
 
-	it("installs the active package name from the update check during self-update", async () => {
+	it("installs the distribution package from the update check during self-update", async () => {
 		const globalPrefix = join(tempDir, "global-prefix");
 		const selfPackageDir = join(globalPrefix, "lib", "node_modules", "@mariozechner", "pi-coding-agent");
 		const fakeNpmPath = join(tempDir, "fake-npm.cjs");
@@ -621,11 +639,8 @@ else {
 			value: join(selfPackageDir, "dist", "cli.js"),
 			configurable: true,
 		});
-		const activePackageName = PACKAGE_NAME === "@new-scope/pi" ? "@newer-scope/pi" : "@new-scope/pi";
-		vi.stubGlobal(
-			"fetch",
-			vi.fn(async () => Response.json({ packageName: activePackageName, version: "0.73.0" })),
-		);
+		const targetVersion = getNewerPatchVersion();
+		vi.stubGlobal("fetch", stubDistributionVersionFetch(targetVersion, { packageName: "@new-scope/pi" }));
 
 		const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
 		const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
@@ -636,10 +651,17 @@ else {
 			expect(process.exitCode).toBeUndefined();
 			expect(errorSpy).not.toHaveBeenCalled();
 			const recordedCalls = JSON.parse(readFileSync(recordPath, "utf-8")) as string[][];
-			expect(recordedCalls).toEqual([
-				expect.arrayContaining(["uninstall", "-g", PACKAGE_NAME]),
-				expect.arrayContaining(["install", "-g", `${activePackageName}@0.73.0`]),
-			]);
+			if (UPDATE_REPO) {
+				// Fork distributions pin packageName to this build; GitHub tags do not rename the npm package.
+				expect(recordedCalls).toEqual([
+					expect.arrayContaining(["install", "-g", `${PACKAGE_NAME}@${targetVersion}`]),
+				]);
+			} else {
+				expect(recordedCalls).toEqual([
+					expect.arrayContaining(["uninstall", "-g", PACKAGE_NAME]),
+					expect.arrayContaining(["install", "-g", `@new-scope/pi@${targetVersion}`]),
+				]);
+			}
 		} finally {
 			logSpy.mockRestore();
 			errorSpy.mockRestore();
@@ -666,10 +688,7 @@ else {
 			value: join(tempDir, "pnpm", "bin", "node"),
 			configurable: true,
 		});
-		vi.stubGlobal(
-			"fetch",
-			vi.fn(async () => Response.json({ version: getNewerPatchVersion() })),
-		);
+		vi.stubGlobal("fetch", stubDistributionVersionFetch(getNewerPatchVersion()));
 
 		const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
 		const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
@@ -719,10 +738,8 @@ if(args.includes("install")) process.exit(23);
 			configurable: true,
 		});
 		const activePackageName = PACKAGE_NAME === "@new-scope/pi" ? "@newer-scope/pi" : "@new-scope/pi";
-		vi.stubGlobal(
-			"fetch",
-			vi.fn(async () => Response.json({ packageName: activePackageName, version: "0.73.0" })),
-		);
+		const targetVersion = getNewerPatchVersion();
+		vi.stubGlobal("fetch", stubDistributionVersionFetch(targetVersion, { packageName: activePackageName }));
 
 		const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
 		const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
@@ -736,10 +753,16 @@ if(args.includes("install")) process.exit(23);
 			expect(stdout).not.toContain(`Updated pi`);
 			expect(stderr).toContain("exited with code 23");
 			const recordedCalls = JSON.parse(readFileSync(recordPath, "utf-8")) as string[][];
-			expect(recordedCalls).toEqual([
-				expect.arrayContaining(["uninstall", "-g", PACKAGE_NAME]),
-				expect.arrayContaining(["install", "-g", `${activePackageName}@0.73.0`]),
-			]);
+			if (UPDATE_REPO) {
+				expect(recordedCalls).toEqual([
+					expect.arrayContaining(["install", "-g", `${PACKAGE_NAME}@${targetVersion}`]),
+				]);
+			} else {
+				expect(recordedCalls).toEqual([
+					expect.arrayContaining(["uninstall", "-g", PACKAGE_NAME]),
+					expect.arrayContaining(["install", "-g", `${activePackageName}@${targetVersion}`]),
+				]);
+			}
 		} finally {
 			logSpy.mockRestore();
 			errorSpy.mockRestore();
