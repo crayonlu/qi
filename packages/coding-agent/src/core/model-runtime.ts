@@ -525,6 +525,11 @@ export class ModelRuntime implements Models {
 		await this.refresh({ allowNetwork: this.modelNetworkEnabled });
 	}
 
+	/** True when provider exists in the built-in/native catalog (not extension-only). */
+	hasBuiltinProvider(providerId: string): boolean {
+		return this.builtins.has(providerId) || this.defaultBuiltins.has(providerId);
+	}
+
 	async refresh(options: ModelsRefreshOptions = {}): Promise<ModelsRefreshResult> {
 		const refreshOptions = {
 			...options,

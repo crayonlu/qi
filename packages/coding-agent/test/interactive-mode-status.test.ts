@@ -383,11 +383,14 @@ describe("InteractiveMode.createBaseAutocompleteProvider", () => {
 				promptTemplates: [];
 				extensionRunner: { getRegisteredCommands: () => [] };
 				resourceLoader: { getSkills: () => { skills: [] } };
+				messages: [];
 			};
 			settingsManager: { getEnableSkillCommands: () => boolean };
 			skillCommands: Map<string, string>;
 			sessionManager: { getCwd: () => string };
 			fdPath: null;
+			prefixAutocompleteDescription: (description: string | undefined) => string | undefined;
+			getSlashAutocompleteContextHints: () => { preferredCategories?: string[] };
 		};
 
 		const createBaseAutocompleteProvider = (
@@ -406,11 +409,14 @@ describe("InteractiveMode.createBaseAutocompleteProvider", () => {
 				promptTemplates: [],
 				extensionRunner: { getRegisteredCommands: () => [] },
 				resourceLoader: { getSkills: () => ({ skills: [] }) },
+				messages: [],
 			},
 			settingsManager: { getEnableSkillCommands: () => false },
 			skillCommands: new Map(),
 			sessionManager: { getCwd: () => "/tmp" },
 			fdPath: null,
+			prefixAutocompleteDescription: (description) => description,
+			getSlashAutocompleteContextHints: () => ({}),
 		};
 
 		const provider = createBaseAutocompleteProvider.call(fakeThis);
@@ -433,12 +439,15 @@ describe("InteractiveMode.createBaseAutocompleteProvider", () => {
 				promptTemplates: [];
 				extensionRunner: { getRegisteredCommands: () => [] };
 				resourceLoader: { getSkills: () => { skills: [] } };
+				messages: [];
 			};
 			settingsManager: { getEnableSkillCommands: () => boolean };
 			skillCommands: Map<string, string>;
 			sessionManager: { getCwd: () => string };
 			fdPath: null;
 			getLoginProviderOptions: () => AuthSelectorProvider[];
+			prefixAutocompleteDescription: (description: string | undefined) => string | undefined;
+			getSlashAutocompleteContextHints: () => { preferredCategories?: string[] };
 		};
 
 		const createBaseAutocompleteProvider = (
@@ -453,6 +462,7 @@ describe("InteractiveMode.createBaseAutocompleteProvider", () => {
 				promptTemplates: [],
 				extensionRunner: { getRegisteredCommands: () => [] },
 				resourceLoader: { getSkills: () => ({ skills: [] }) },
+				messages: [],
 			},
 			settingsManager: { getEnableSkillCommands: () => false },
 			skillCommands: new Map(),
@@ -463,6 +473,8 @@ describe("InteractiveMode.createBaseAutocompleteProvider", () => {
 				{ id: "anthropic", name: "Anthropic", authType: "api_key" },
 				{ id: "openai", name: "OpenAI", authType: "api_key" },
 			],
+			prefixAutocompleteDescription: (description) => description,
+			getSlashAutocompleteContextHints: () => ({}),
 		};
 
 		const provider = createBaseAutocompleteProvider.call(fakeThis);

@@ -4,6 +4,9 @@
 
 ### Added
 
+- Added built-in `qi-workflow` extension with session-scoped goals, todos, plans, tasks/workflows, jobs, structured questions, `/btw`, MCP panel, rewind, and cleanup commands/tools. Selected MIT reference implementations are adopted in-tree under `extensions/qi-workflow/vendor` (not as third-party npm extension deps); MCP uses `@modelcontextprotocol/sdk` for stdio/HTTP/SSE + OAuth lifecycle.
+- Interactive slash autocomplete now opens a categorized command browser (landing categories, global fuzzy search across names/descriptions/aliases/categories, source badges, collapsed Templates/Skills/Extensions) while keeping flat command names like `/plan` and `/new` unchanged.
+- Added `/models` configuration workflow to create and edit custom providers/models in `models.json` (JSONC-preserving via `jsonc-parser`), reload the live model registry, and keep `/model` as the selector (which reloads `models.json` first).
 - Exposed `PI_SESSION_ID`, `PI_SESSION_FILE`, `PI_PROVIDER`, `PI_MODEL`, and `PI_REASONING_LEVEL` to commands run by built-in and factory-created bash tools.
 
 ### Fixed

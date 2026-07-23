@@ -216,10 +216,18 @@ async function walkDirectoryWithFd(
 	});
 }
 
+export type SlashCommandSourceKind = "builtin" | "qi" | "template" | "skill" | "extension";
+
 export interface AutocompleteItem {
 	value: string;
 	label: string;
 	description?: string;
+	/** When false, keyboard navigation skips this row (e.g. category headers). Default true. */
+	selectable?: boolean;
+	isHeader?: boolean;
+	/** Category/group drill-in row (not a command completion). */
+	isGroup?: boolean;
+	groupId?: string;
 }
 
 type Awaitable<T> = T | Promise<T>;
@@ -228,14 +236,50 @@ export interface SlashCommand {
 	name: string;
 	description?: string;
 	argumentHint?: string;
+	category?: string;
+	sourceKind?: SlashCommandSourceKind;
+	aliases?: string[];
+	priority?: number;
+	/** Callable when typed, but omitted from the slash browser. */
+	hidden?: boolean;
+	isHeader?: boolean;
+	isGroup?: boolean;
+	groupId?: string;
 	// Function to get argument completions for this command
 	// Returns null if no argument completion is available
 	getArgumentCompletions?(argumentPrefix: string): Awaitable<AutocompleteItem[] | null>;
 }
 
+export interface SlashCategoryDefinition {
+	id: string;
+	label: string;
+	/** Collapsed count tile on empty root (Templates / Skills / Extensions). */
+	collapsed?: boolean;
+	order?: number;
+}
+
+export interface AutocompleteContextHints {
+	preferredCategories?: string[];
+}
+
+export interface CombinedAutocompleteOptions {
+	/** Enable category landing + drill-in when commands declare category metadata. */
+	categorized?: boolean;
+	categories?: SlashCategoryDefinition[];
+	contextHints?: () => AutocompleteContextHints | undefined;
+}
+
 export interface AutocompleteSuggestions {
 	items: AutocompleteItem[];
 	prefix: string; // What we're matching against (e.g., "/" or "src/")
+}
+
+export interface AutocompleteApplyResult {
+	lines: string[];
+	cursorLine: number;
+	cursorCol: number;
+	/** Keep the autocomplete picker open (category/group drill-in). */
+	keepOpen?: boolean;
 }
 
 export interface AutocompleteProvider {
@@ -259,26 +303,56 @@ export interface AutocompleteProvider {
 		cursorCol: number,
 		item: AutocompleteItem,
 		prefix: string,
-	): {
-		lines: string[];
-		cursorLine: number;
-		cursorCol: number;
-	};
+	): AutocompleteApplyResult;
 
 	// Check if file completion should trigger for explicit Tab completion
 	shouldTriggerFileCompletion?(lines: string[], cursorLine: number, cursorCol: number): boolean;
+
+	/**
+	 * Pop category/group drill-in. Returns true if handled (caller should refresh
+	 * suggestions instead of closing autocomplete).
+	 */
+	handleBack?(): boolean;
+}
+
+const HEADER_VALUE_PREFIX = "__header__:";
+const GROUP_VALUE_PREFIX = "__group__:";
+
+function isSlashCommandEntry(cmd: SlashCommand | AutocompleteItem): cmd is SlashCommand {
+	return "name" in cmd;
 }
 
 // Combined provider that handles both slash commands and file paths
 export class CombinedAutocompleteProvider implements AutocompleteProvider {
-	private commands: (SlashCommand | AutocompleteItem)[];
+	protected commands: (SlashCommand | AutocompleteItem)[];
 	private basePath: string;
 	private fdPath: string | null;
+	private categorized: boolean;
+	private categories: SlashCategoryDefinition[];
+	private contextHints?: () => AutocompleteContextHints | undefined;
+	/** Drill-in category/group id while query is empty. */
+	private selectedGroupId: string | null = null;
 
-	constructor(commands: (SlashCommand | AutocompleteItem)[] = [], basePath: string, fdPath: string | null = null) {
+	constructor(
+		commands: (SlashCommand | AutocompleteItem)[] = [],
+		basePath: string,
+		fdPath: string | null = null,
+		options: CombinedAutocompleteOptions = {},
+	) {
 		this.commands = commands;
 		this.basePath = basePath;
 		this.fdPath = fdPath;
+		this.categorized = options.categorized ?? false;
+		this.categories = options.categories ?? [];
+		this.contextHints = options.contextHints;
+	}
+
+	handleBack(): boolean {
+		if (!this.categorized || !this.selectedGroupId) {
+			return false;
+		}
+		this.selectedGroupId = null;
+		return true;
 	}
 
 	async getSuggestions(
@@ -309,40 +383,23 @@ export class CombinedAutocompleteProvider implements AutocompleteProvider {
 			const spaceIndex = textBeforeCursor.indexOf(" ");
 
 			if (spaceIndex === -1) {
-				const prefix = textBeforeCursor.slice(1);
-				const commandItems = this.commands.map((cmd) => {
-					const name = "name" in cmd ? cmd.name : cmd.value;
-					const hint = "argumentHint" in cmd && cmd.argumentHint ? cmd.argumentHint : undefined;
-					const desc = cmd.description ?? "";
-					const fullDesc = hint ? (desc ? `${hint} — ${desc}` : hint) : desc;
-					return {
-						name,
-						label: name,
-						description: fullDesc || undefined,
-					};
-				});
-
-				const filtered = fuzzyFilter(commandItems, prefix, (item) => item.name).map((item) => ({
-					value: item.name,
-					label: item.label,
-					...(item.description && { description: item.description }),
-				}));
-
-				if (filtered.length === 0) return null;
+				const query = textBeforeCursor.slice(1);
+				const slashItems = this.getSlashCommandSuggestions(query);
+				if (slashItems.length === 0) return null;
 
 				return {
-					items: filtered,
+					items: slashItems,
 					prefix: textBeforeCursor,
 				};
 			}
 
+			// Typing arguments clears category drill-in
+			this.selectedGroupId = null;
+
 			const commandName = textBeforeCursor.slice(1, spaceIndex);
 			const argumentText = textBeforeCursor.slice(spaceIndex + 1);
 
-			const command = this.commands.find((cmd) => {
-				const name = "name" in cmd ? cmd.name : cmd.value;
-				return name === commandName;
-			});
+			const command = this.findCommand(commandName);
 			if (!command || !("getArgumentCompletions" in command) || !command.getArgumentCompletions) {
 				return null;
 			}
@@ -378,7 +435,7 @@ export class CombinedAutocompleteProvider implements AutocompleteProvider {
 		cursorCol: number,
 		item: AutocompleteItem,
 		prefix: string,
-	): { lines: string[]; cursorLine: number; cursorCol: number } {
+	): AutocompleteApplyResult {
 		const currentLine = lines[cursorLine] || "";
 		const beforePrefix = currentLine.slice(0, cursorCol - prefix.length);
 		const afterCursor = currentLine.slice(cursorCol);
@@ -388,10 +445,29 @@ export class CombinedAutocompleteProvider implements AutocompleteProvider {
 		const adjustedAfterCursor =
 			isQuotedPrefix && hasTrailingQuoteInItem && hasLeadingQuoteAfterCursor ? afterCursor.slice(1) : afterCursor;
 
+		// Category / collapsed-group drill-in: keep "/" and reopen picker
+		if (item.isGroup && item.groupId) {
+			this.selectedGroupId = item.groupId;
+			const newLine = `${beforePrefix}/${adjustedAfterCursor}`;
+			const newLines = [...lines];
+			newLines[cursorLine] = newLine;
+			return {
+				lines: newLines,
+				cursorLine,
+				cursorCol: beforePrefix.length + 1,
+				keepOpen: true,
+			};
+		}
+
+		if (item.isHeader || item.selectable === false) {
+			return { lines, cursorLine, cursorCol, keepOpen: true };
+		}
+
 		// Check if we're completing a slash command (prefix starts with "/" but NOT a file path)
 		// Slash commands are at the start of the line and don't contain path separators after the first /
 		const isSlashCommand = prefix.startsWith("/") && beforePrefix.trim() === "" && !prefix.slice(1).includes("/");
 		if (isSlashCommand) {
+			this.selectedGroupId = null;
 			// This is a command name completion
 			const newLine = `${beforePrefix}/${item.value} ${adjustedAfterCursor}`;
 			const newLines = [...lines];
@@ -457,6 +533,217 @@ export class CombinedAutocompleteProvider implements AutocompleteProvider {
 			cursorLine,
 			cursorCol: beforePrefix.length + cursorOffset,
 		};
+	}
+
+	private findCommand(commandName: string): (SlashCommand | AutocompleteItem) | undefined {
+		return this.commands.find((cmd) => {
+			if (isSlashCommandEntry(cmd)) {
+				if (cmd.name === commandName) return true;
+				return cmd.aliases?.includes(commandName) ?? false;
+			}
+			return cmd.value === commandName;
+		});
+	}
+
+	private visibleSlashCommands(): SlashCommand[] {
+		return this.commands.filter((cmd): cmd is SlashCommand => {
+			if (!isSlashCommandEntry(cmd)) return false;
+			return !cmd.hidden;
+		});
+	}
+
+	private categoryLabel(categoryId: string | undefined): string {
+		if (!categoryId) return "";
+		return this.categories.find((c) => c.id === categoryId)?.label ?? categoryId;
+	}
+
+	private commandToItem(cmd: SlashCommand): AutocompleteItem {
+		const hint = cmd.argumentHint;
+		const desc = cmd.description ?? "";
+		const fullDesc = hint ? (desc ? `${hint} — ${desc}` : hint) : desc;
+		return {
+			value: cmd.name,
+			label: cmd.name,
+			...(fullDesc ? { description: fullDesc } : {}),
+		};
+	}
+
+	private commandSearchText(cmd: SlashCommand): string {
+		const parts = [
+			cmd.name,
+			...(cmd.aliases ?? []),
+			cmd.description ?? "",
+			cmd.argumentHint ?? "",
+			cmd.category ?? "",
+			this.categoryLabel(cmd.category),
+		];
+		return parts.filter(Boolean).join(" ");
+	}
+
+	private orderedCategories(): SlashCategoryDefinition[] {
+		const preferred = this.contextHints?.()?.preferredCategories ?? [];
+		const preferredSet = new Set(preferred);
+		const sorted = [...this.categories].sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
+		if (preferredSet.size === 0) return sorted;
+
+		const preferredCats = preferred
+			.map((id) => sorted.find((c) => c.id === id))
+			.filter((c): c is SlashCategoryDefinition => Boolean(c));
+		const rest = sorted.filter((c) => !preferredSet.has(c.id));
+		return [...preferredCats, ...rest];
+	}
+
+	private buildCategoryLanding(): AutocompleteItem[] {
+		const commands = this.visibleSlashCommands();
+		const items: AutocompleteItem[] = [];
+
+		for (const category of this.orderedCategories()) {
+			const inCategory = commands.filter((cmd) => cmd.category === category.id);
+			if (category.collapsed) {
+				if (inCategory.length === 0) continue;
+				items.push({
+					value: `${GROUP_VALUE_PREFIX}${category.id}`,
+					label: `${category.label} (${inCategory.length})`,
+					description: `Expand ${category.label.toLowerCase()}`,
+					isGroup: true,
+					groupId: category.id,
+				});
+				continue;
+			}
+
+			if (inCategory.length === 0) continue;
+			const preview = inCategory
+				.slice(0, 3)
+				.map((c) => `/${c.name}`)
+				.join(" · ");
+			items.push({
+				value: `${GROUP_VALUE_PREFIX}${category.id}`,
+				label: category.label,
+				description: preview || undefined,
+				isGroup: true,
+				groupId: category.id,
+			});
+		}
+
+		return items;
+	}
+
+	private buildCategoryCommands(groupId: string): AutocompleteItem[] {
+		const category = this.categories.find((c) => c.id === groupId);
+		const commands = this.visibleSlashCommands()
+			.filter((cmd) => cmd.category === groupId)
+			.sort((a, b) => (b.priority ?? 0) - (a.priority ?? 0) || a.name.localeCompare(b.name));
+
+		const items: AutocompleteItem[] = [];
+		if (category) {
+			items.push({
+				value: `${HEADER_VALUE_PREFIX}${groupId}`,
+				label: category.label,
+				selectable: false,
+				isHeader: true,
+			});
+		}
+		for (const cmd of commands) {
+			items.push(this.commandToItem(cmd));
+		}
+		return items;
+	}
+
+	private buildGroupedSearchResults(query: string): AutocompleteItem[] {
+		const commands = this.visibleSlashCommands();
+		const matched = fuzzyFilter(commands, query, (cmd) => this.commandSearchText(cmd));
+
+		// Also match category labels so typing a category name surfaces its commands
+		const matchedCategoryIds = new Set(
+			fuzzyFilter(this.categories, query, (c) => `${c.id} ${c.label}`).map((c) => c.id),
+		);
+		for (const cmd of commands) {
+			if (cmd.category && matchedCategoryIds.has(cmd.category) && !matched.includes(cmd)) {
+				matched.push(cmd);
+			}
+		}
+
+		if (matched.length === 0) return [];
+
+		const byCategory = new Map<string, SlashCommand[]>();
+		const uncategorized: SlashCommand[] = [];
+		for (const cmd of matched) {
+			if (cmd.category) {
+				const list = byCategory.get(cmd.category) ?? [];
+				list.push(cmd);
+				byCategory.set(cmd.category, list);
+			} else {
+				uncategorized.push(cmd);
+			}
+		}
+
+		const items: AutocompleteItem[] = [];
+		for (const category of this.orderedCategories()) {
+			const list = byCategory.get(category.id);
+			if (!list || list.length === 0) continue;
+			items.push({
+				value: `${HEADER_VALUE_PREFIX}${category.id}`,
+				label: category.label,
+				selectable: false,
+				isHeader: true,
+			});
+			for (const cmd of list) {
+				items.push(this.commandToItem(cmd));
+			}
+		}
+
+		if (uncategorized.length > 0) {
+			items.push({
+				value: `${HEADER_VALUE_PREFIX}other`,
+				label: "Other",
+				selectable: false,
+				isHeader: true,
+			});
+			for (const cmd of uncategorized) {
+				items.push(this.commandToItem(cmd));
+			}
+		}
+
+		return items;
+	}
+
+	private getSlashCommandSuggestions(query: string): AutocompleteItem[] {
+		if (!this.categorized || this.categories.length === 0) {
+			// Flat list (legacy / narrow providers)
+			const commandItems = this.visibleSlashCommands().map((cmd) => {
+				const item = this.commandToItem(cmd);
+				return { ...item, name: cmd.name, searchText: this.commandSearchText(cmd) };
+			});
+			// Also include AutocompleteItem-only entries for backward compat
+			for (const cmd of this.commands) {
+				if (isSlashCommandEntry(cmd)) continue;
+				commandItems.push({
+					value: cmd.value,
+					label: cmd.label,
+					description: cmd.description,
+					name: cmd.value,
+					searchText: `${cmd.value} ${cmd.label} ${cmd.description ?? ""}`,
+				});
+			}
+
+			return fuzzyFilter(commandItems, query, (item) => item.searchText).map((item) => ({
+				value: item.value,
+				label: item.label,
+				...(item.description ? { description: item.description } : {}),
+			}));
+		}
+
+		// Typing always does global search; empty query uses landing or drill-in
+		if (query.length > 0) {
+			this.selectedGroupId = null;
+			return this.buildGroupedSearchResults(query);
+		}
+
+		if (this.selectedGroupId) {
+			return this.buildCategoryCommands(this.selectedGroupId);
+		}
+
+		return this.buildCategoryLanding();
 	}
 
 	// Extract @ prefix for fuzzy file suggestions
