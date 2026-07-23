@@ -50,7 +50,8 @@ describe("qi-workflow TUI board/footer/overlays", () => {
 		const lines = buildBoardLines(s, theme, false);
 		expect(lines).toBeDefined();
 		expect(lines!.length).toBeGreaterThan(0);
-		expect(lines!.length).toBeLessThanOrEqual(5);
+		// goal + plan + todos + task + job (no artificial line cap)
+		expect(lines!.length).toBeLessThanOrEqual(6);
 
 		const collapsed = buildBoardLines(s, theme, true);
 		expect(collapsed).toHaveLength(1);

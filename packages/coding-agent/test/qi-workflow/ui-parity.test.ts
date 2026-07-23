@@ -161,7 +161,7 @@ describe("qi-workflow UI projections", () => {
 		expect(opened.value.questionCount).toBe(2);
 	});
 
-	it("footer drops low-priority signals when narrow", () => {
+	it("footer keeps all signals including rw on narrow widths", () => {
 		const state = createEmptyState("footer-narrow");
 		state.goal = {
 			id: "g1",
@@ -231,10 +231,61 @@ describe("qi-workflow UI projections", () => {
 				revision: 1,
 			},
 		];
-		const wide = buildFooterText(state, 120);
-		expect(wide).toContain("rw=1");
-		const narrow = buildFooterText(state, 40);
-		expect(narrow).toContain("goal:active");
-		expect(narrow).not.toContain("rw=1");
+		const text = buildFooterText(state);
+		expect(text).toContain("goal:active");
+		expect(text).toContain("plan:ready");
+		expect(text).toContain("todos=1");
+		expect(text).toContain("mcp=");
+		expect(text).toContain("rw=1");
+		expect(text).toMatch(/[◎✓☐●↩]/);
+	});
+
+	it("footer puts fail and blocked ahead of routine signals", () => {
+		const state = createEmptyState("footer-alert");
+		state.goal = {
+			id: "g1",
+			objective: "O",
+			status: "blocked",
+			todoIds: [],
+			iteration: 1,
+			tokensUsed: 0,
+			timeUsedSeconds: 0,
+			baselineTokens: 0,
+			summary: "O",
+			blockReason: "need decision",
+			createdAt: 1,
+			updatedAt: 1,
+			revision: 1,
+		};
+		state.tasks = [
+			{
+				id: "task_1",
+				goal: "t",
+				status: "failed",
+				summary: "t",
+				attached: false,
+				cancelRequested: false,
+				createdAt: 1,
+				updatedAt: 1,
+				revision: 1,
+			},
+		];
+		state.rewindCheckpoints = [
+			{
+				id: "rw1",
+				label: "resume",
+				summary: "resume",
+				createdAt: 1,
+				updatedAt: 1,
+				revision: 1,
+			},
+		];
+		const text = buildFooterText(state, 3)!;
+		const failAt = text.indexOf("fail=");
+		const goalAt = text.indexOf("goal:blocked");
+		const rwAt = text.indexOf("rw=");
+		expect(failAt).toBeGreaterThanOrEqual(0);
+		expect(goalAt).toBeGreaterThan(failAt);
+		expect(rwAt).toBeGreaterThan(goalAt);
 	});
 });

@@ -1,6 +1,7 @@
 /**
  * Build board lines for active Qi work (goal / plan / todos / tasks / jobs).
  * Collapsed mode uses /board expand — never a dead [/qi expand] hint.
+ * Icons mark attention states; do not drop blocked/failed signals from chips.
  */
 
 import type { Component, TUI } from "@earendil-works/pi-tui";
@@ -10,6 +11,7 @@ import type { Theme } from "../../../modes/interactive/theme/theme.ts";
 import type { WorkflowController } from "../controller.ts";
 import type { JobEntity, QiWorkflowState, TaskEntity, TodoItem } from "../domain/index.ts";
 import { colorStatus } from "./status-color.ts";
+import { goalIcon, ICONS, planIcon } from "./status-icons.ts";
 
 export const QI_BOARD_WIDGET_KEY = "qi-board";
 
@@ -46,22 +48,21 @@ export function hasActiveWork(state: QiWorkflowState): boolean {
 }
 
 function formatTodoChip(t: TodoItem): string {
-	const mark = t.status === "in_progress" ? "*" : t.status === "blocked" ? "!" : "·";
-	const raw = t.status === "in_progress" && t.activeForm ? t.activeForm : t.text;
-	const label = raw.length > 28 ? `${raw.slice(0, 27)}…` : raw;
-	const deps =
-		t.blockedBy && t.blockedBy.length > 0
-			? `↩${t.blockedBy.slice(0, 2).join(",")}${t.blockedBy.length > 2 ? "…" : ""}`
-			: "";
+	const mark =
+		t.status === "in_progress" ? ICONS.todoActive : t.status === "blocked" ? ICONS.todoBlocked : ICONS.todos;
+	const label = t.status === "in_progress" && t.activeForm ? t.activeForm : t.text;
+	const deps = t.blockedBy && t.blockedBy.length > 0 ? `${ICONS.rewind}${t.blockedBy.join(",")}` : "";
 	return `${mark}${label}${deps}`;
 }
 
 function compactTodos(todos: TodoItem[]): string {
-	const unfinished = todos.filter(isUnfinishedTodo).sort((a, b) => a.position - b.position);
+	const unfinished = todos.filter(isUnfinishedTodo).sort((a, b) => {
+		const rank = (s: string) => (s === "blocked" ? 0 : s === "in_progress" ? 1 : 2);
+		return rank(a.status) - rank(b.status) || a.position - b.position;
+	});
 	if (unfinished.length === 0) return "";
-	const shown = unfinished.slice(0, 3).map(formatTodoChip);
-	const extra = unfinished.length > 3 ? ` +${unfinished.length - 3}` : "";
-	return `${shown.join(" · ")}${extra}`;
+	// Keep every unfinished chip (blocked first). Width truncate only at render.
+	return unfinished.map(formatTodoChip).join(" · ");
 }
 
 function goalUsageBits(state: QiWorkflowState, theme: Theme): string {
@@ -93,12 +94,22 @@ export function buildBoardLines(state: QiWorkflowState, theme: Theme, collapsed:
 	if (collapsed) {
 		const bits: string[] = [];
 		if (state.goal && isActiveGoal(state)) {
-			bits.push(colorStatus(theme, state.goal.status, `goal:${state.goal.status}`));
+			bits.push(colorStatus(theme, state.goal.status, `${goalIcon(state.goal.status)}goal:${state.goal.status}`));
 		}
-		if (planVisible && plan) bits.push(theme.fg("muted", `plan:${plan.status}`));
-		if (unfinished.length > 0) bits.push(theme.fg("muted", `todos=${unfinished.length}`));
-		if (activeTasks.length > 0) bits.push(theme.fg("accent", `tasks=${activeTasks.length}`));
-		if (activeJobs.length > 0) bits.push(theme.fg("accent", `jobs=${activeJobs.length}`));
+		if (planVisible && plan) {
+			bits.push(theme.fg("muted", `${planIcon(plan.status)}plan:${plan.status}`));
+		}
+		if (unfinished.length > 0) {
+			const blocked = unfinished.filter((t) => t.status === "blocked").length;
+			const icon = blocked > 0 ? ICONS.todoBlocked : ICONS.todos;
+			bits.push(theme.fg(blocked > 0 ? "error" : "muted", `${icon}todos=${unfinished.length}`));
+		}
+		if (activeTasks.length > 0) {
+			bits.push(theme.fg("accent", `${ICONS.tasks}tasks=${activeTasks.length}`));
+		}
+		if (activeJobs.length > 0) {
+			bits.push(theme.fg("accent", `${ICONS.jobs}jobs=${activeJobs.length}`));
+		}
 		const summary = bits.length > 0 ? bits.join(" ") : theme.fg("dim", "qi");
 		return [theme.fg("dim", "▸ ") + summary + theme.fg("dim", "  [/board expand]")];
 	}
@@ -106,40 +117,40 @@ export function buildBoardLines(state: QiWorkflowState, theme: Theme, collapsed:
 	const lines: string[] = [];
 
 	if (state.goal && isActiveGoal(state)) {
-		const label = colorStatus(theme, state.goal.status, "goal");
+		const label = colorStatus(theme, state.goal.status, `${goalIcon(state.goal.status)}goal`);
 		const obj = theme.fg("text", state.goal.objective);
 		lines.push(`${label} ${obj}${goalUsageBits(state, theme)}`);
 		if (state.goal.blockReason) {
-			lines.push(theme.fg("error", `  ! ${state.goal.blockReason}`));
+			lines.push(theme.fg("error", `  ${ICONS.fail} ${state.goal.blockReason}`));
 		}
 	}
 
 	if (planVisible && plan) {
 		const planColor = plan.status === "ready" ? "success" : plan.status === "executing" ? "accent" : "muted";
 		lines.push(
-			`${theme.fg(planColor, `plan:${plan.status}`)} ${theme.fg("text", plan.goal)}` +
+			`${theme.fg(planColor, `${planIcon(plan.status)}plan:${plan.status}`)} ${theme.fg("text", plan.goal)}` +
 				theme.fg("dim", "  [/plan execute · /plan ready]"),
 		);
 	}
 
 	if (unfinished.length > 0) {
 		const compact = compactTodos(state.todos);
-		lines.push(`${theme.fg("muted", "todos")} ${theme.fg("text", compact)}`);
+		lines.push(`${theme.fg("muted", `${ICONS.todos}todos`)} ${theme.fg("text", compact)}`);
 	}
 
 	if (activeTasks.length > 0) {
 		const task = activeTasks[0]!;
 		const more = activeTasks.length > 1 ? theme.fg("dim", ` +${activeTasks.length - 1}`) : "";
-		lines.push(`${colorStatus(theme, task.status, "task")} ${theme.fg("text", task.goal)}${more}`);
+		lines.push(`${colorStatus(theme, task.status, `${ICONS.tasks}task`)} ${theme.fg("text", task.goal)}${more}`);
 	}
 
 	if (activeJobs.length > 0) {
 		const job = activeJobs[0]!;
 		const more = activeJobs.length > 1 ? theme.fg("dim", ` +${activeJobs.length - 1}`) : "";
-		lines.push(`${colorStatus(theme, job.status, "job")} ${theme.fg("text", job.name)}${more}`);
+		lines.push(`${colorStatus(theme, job.status, `${ICONS.jobs}job`)} ${theme.fg("text", job.name)}${more}`);
 	}
 
-	return lines.length > 0 ? lines.slice(0, 6) : undefined;
+	return lines.length > 0 ? lines : undefined;
 }
 
 class QiWorkBoard implements Component {
