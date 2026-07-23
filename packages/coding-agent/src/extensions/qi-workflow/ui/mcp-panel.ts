@@ -6,7 +6,7 @@ import type { WorkflowController } from "../controller.ts";
 import type { McpServerState } from "../domain/index.ts";
 import { setMcpEnabled } from "../domain/index.ts";
 import { renderBoxPanel } from "./chrome.ts";
-import { CENTER_OVERLAY, termCols } from "./layout.ts";
+import { BOTTOM_OVERLAY, panelMaxHeight, termCols, tuiRows } from "./layout.ts";
 import { colorStatus } from "./status-color.ts";
 import { ICONS } from "./status-icons.ts";
 
@@ -279,7 +279,13 @@ class McpPanel implements Component {
 			),
 		];
 
-		const lines = renderBoxPanel(th, { title: "MCP Servers", width: w, body, footer });
+		const lines = renderBoxPanel(th, {
+			title: "MCP Servers",
+			width: w,
+			body,
+			footer,
+			maxHeight: panelMaxHeight(tuiRows(this.tui), "sheet"),
+		});
 		this.cachedWidth = width;
 		this.cachedLines = lines;
 		return lines;
@@ -353,6 +359,6 @@ export async function showMcpPanel(
 	}
 	await ctx.ui.custom<void>((tui, theme, _kb, done) => new McpPanel(tui, theme, controller, mcpApi, done), {
 		overlay: true,
-		overlayOptions: CENTER_OVERLAY,
+		overlayOptions: BOTTOM_OVERLAY,
 	});
 }

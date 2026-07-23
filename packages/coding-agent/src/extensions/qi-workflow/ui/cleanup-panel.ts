@@ -10,7 +10,7 @@ import {
 	setCleanupReport,
 } from "../domain/index.ts";
 import { renderBoxPanel } from "./chrome.ts";
-import { CENTER_OVERLAY, termCols } from "./layout.ts";
+import { CENTER_OVERLAY, panelMaxHeight, termCols, tuiRows } from "./layout.ts";
 
 export interface CleanupPanelApi {
 	/** Produce a dry-run report (categories with count/bytes/paths). */
@@ -193,6 +193,7 @@ class CleanupPanel implements Component {
 			width: w,
 			body,
 			footer: [th.fg("dim", "↑↓ · p paths · a apply (confirm) · Esc close")],
+			maxHeight: panelMaxHeight(tuiRows(this.tui), "modal"),
 		});
 
 		this.cachedWidth = width;

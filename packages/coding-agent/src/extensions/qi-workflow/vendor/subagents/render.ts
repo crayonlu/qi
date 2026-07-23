@@ -33,6 +33,25 @@ function treePrefix(isLast: boolean, theme: Theme): string {
 	return theme.fg("dim", isLast ? `${TREE_LAST} ` : `${TREE_BRANCH} `);
 }
 
+/** Vertical rail under ├─/└─ so multiline tool bodies do not break the tree. */
+function treeRail(theme: Theme): string {
+	return theme.fg("dim", "│  ");
+}
+
+/** Prefix every line of a block with tree chrome (first = ├─/└─, rest = │). */
+function treeBlock(theme: Theme, isLast: boolean, body: string): string {
+	const lines = body.split("\n");
+	const head = treePrefix(isLast, theme);
+	const rail = treeRail(theme);
+	return lines.map((line, i) => `${i === 0 ? head : rail}${line}`).join("\n");
+}
+
+function flattenOneLine(text: string, max = 60): string {
+	const one = text.replace(/\s+/g, " ").trim();
+	if (!one) return "...";
+	return one.length > max ? `${one.slice(0, max)}...` : one;
+}
+
 function formatDoneStats(
 	theme: Theme,
 	opts: { tools?: number; usage?: string; partial?: boolean },
@@ -108,8 +127,7 @@ function formatToolCall(
 	switch (toolName) {
 		case "bash": {
 			const command = (args.command as string) || "...";
-			const preview = command.length > 60 ? `${command.slice(0, 60)}...` : command;
-			return themeFg("muted", "$ ") + themeFg("toolOutput", preview);
+			return themeFg("muted", "$ ") + themeFg("toolOutput", flattenOneLine(command));
 		}
 		case "read": {
 			const rawPath = (args.file_path || args.path || "...") as string;
@@ -264,6 +282,7 @@ export function renderSubagentResult(
 	result: AgentToolResult<SubagentDetails>,
 	{ expanded, isPartial }: ToolRenderResultOptions,
 	theme: Theme,
+	tick = 0,
 ) {
 	const details = result.details as SubagentDetails | undefined;
 	if (!details || details.results.length === 0) {
@@ -271,7 +290,7 @@ export function renderSubagentResult(
 		const body = text?.type === "text" ? text.text : "(no output)";
 		if (isPartial) {
 			return new Text(
-				withIcon(theme.fg("warning", spinFrame(0)), theme.fg("muted", body || "Working…")),
+				withIcon(theme.fg("warning", spinFrame(tick)), theme.fg("muted", body || "Working…")),
 				0,
 				0,
 			);
@@ -289,12 +308,11 @@ export function renderSubagentResult(
 		for (let i = 0; i < toShow.length; i++) {
 			const item = toShow[i]!;
 			const last = i === toShow.length - 1;
-			const prefix = treePrefix(last, theme);
 			if (item.type === "text") {
 				const preview = expanded ? item.text : item.text.split("\n").slice(0, 3).join("\n");
-				text += `${prefix}${theme.fg("toolOutput", preview)}\n`;
+				text += `${treeBlock(theme, last, theme.fg("toolOutput", preview))}\n`;
 			} else {
-				text += `${prefix}${formatToolCall(item.name, item.args, theme.fg.bind(theme))}\n`;
+				text += `${treeBlock(theme, last, formatToolCall(item.name, item.args, theme.fg.bind(theme)))}\n`;
 			}
 		}
 		return text.trimEnd();
@@ -303,7 +321,7 @@ export function renderSubagentResult(
 	if (details.mode === "single" && details.results.length === 1) {
 		const r = details.results[0];
 		const isError = isResultError(r);
-		const icon = resultIcon(theme, { error: isError, running: isPartial && !isError });
+		const icon = resultIcon(theme, { error: isError, running: isPartial && !isError, tick });
 		const displayItems = getDisplayItems(r.messages);
 		const toolCount = displayItems.filter((i) => i.type === "toolCall").length;
 		const finalOutput = getResultFinalOutput(r);
@@ -328,8 +346,11 @@ export function renderSubagentResult(
 					if (item.type === "toolCall")
 						container.addChild(
 							new Text(
-								treePrefix(i === displayItems.length - 1 && !finalOutput, theme) +
+								treeBlock(
+									theme,
+									i === displayItems.length - 1 && !finalOutput,
 									formatToolCall(item.name, item.args, theme.fg.bind(theme)),
+								),
 								0,
 								0,
 							),
@@ -361,7 +382,7 @@ export function renderSubagentResult(
 			if (collapsed.total > COLLAPSED_ITEM_COUNT)
 				text += `\n${theme.fg("muted", "(Ctrl+O to expand)")}`;
 		} else if (finalOutput.trim()) {
-			text += `\n${treePrefix(true, theme)}${theme.fg("toolOutput", finalOutput.trim().split("\n").slice(0, 3).join("\n"))}`;
+			text += `\n${treeBlock(theme, true, theme.fg("toolOutput", finalOutput.trim().split("\n").slice(0, 3).join("\n")))}`;
 		} else if (!isError || !r.errorMessage) {
 			text += `\n${theme.fg("muted", isPartial && !isError ? "(running...)" : "(no output)")}`;
 		}
@@ -392,7 +413,7 @@ export function renderSubagentResult(
 			(result) => !isResultError(result) && (!currentIsRunning || result !== currentResult),
 		).length;
 		const icon = currentIsRunning
-			? theme.fg("warning", spinFrame(0))
+			? theme.fg("warning", spinFrame(tick))
 			: successCount === details.results.length
 				? theme.fg("success", ICONS.done)
 				: theme.fg("error", ICONS.fail);
@@ -415,7 +436,7 @@ export function renderSubagentResult(
 				const rIcon = rFailed
 					? theme.fg("error", ICONS.fail)
 					: currentIsRunning && r === currentResult
-						? theme.fg("warning", spinFrame(0))
+						? theme.fg("warning", spinFrame(tick))
 						: theme.fg("success", ICONS.done);
 				const displayItems = getDisplayItems(r.messages);
 				const finalOutput = getResultFinalOutput(r);
@@ -437,8 +458,11 @@ export function renderSubagentResult(
 					if (item.type === "toolCall") {
 						container.addChild(
 							new Text(
-								treePrefix(false, theme) +
+								treeBlock(
+									theme,
+									false,
 									formatToolCall(item.name, item.args, theme.fg.bind(theme)),
+								),
 								0,
 								0,
 							),
@@ -475,7 +499,7 @@ export function renderSubagentResult(
 			const rIcon = rFailed
 				? theme.fg("error", ICONS.fail)
 				: currentIsRunning && r === currentResult
-					? theme.fg("warning", spinFrame(0))
+					? theme.fg("warning", spinFrame(tick))
 					: theme.fg("success", ICONS.done);
 			const collapsed = getCollapsedDisplayItems(r);
 			const finalOutput = getResultFinalOutput(r).trim();
@@ -513,7 +537,7 @@ export function renderSubagentResult(
 			isPartial && !aggregator && running === 0 && failCount === 0;
 		const isRunning = running > 0 || aggregatorRunning || pendingSuccessfulSettlement;
 		const icon = isRunning
-			? theme.fg("warning", spinFrame(0))
+			? theme.fg("warning", spinFrame(tick))
 			: failCount > 0 || aggregatorFailed
 				? theme.fg("warning", ICONS.active)
 				: theme.fg("success", ICONS.done);
@@ -542,7 +566,7 @@ export function renderSubagentResult(
 				const rIcon = rFailed
 					? theme.fg("error", ICONS.fail)
 					: resultIsRunning(r)
-						? theme.fg("warning", spinFrame(0))
+						? theme.fg("warning", spinFrame(tick))
 						: theme.fg("success", ICONS.done);
 				const displayItems = getDisplayItems(r.messages);
 				const finalOutput = getResultFinalOutput(r);
@@ -560,8 +584,11 @@ export function renderSubagentResult(
 					if (item.type === "toolCall") {
 						container.addChild(
 							new Text(
-								treePrefix(false, theme) +
+								treeBlock(
+									theme,
+									false,
 									formatToolCall(item.name, item.args, theme.fg.bind(theme)),
+								),
 								0,
 								0,
 							),
@@ -583,7 +610,7 @@ export function renderSubagentResult(
 				const rIcon = aggregatorFailed
 					? theme.fg("error", ICONS.fail)
 					: aggregatorRunning
-						? theme.fg("warning", spinFrame(0))
+						? theme.fg("warning", spinFrame(tick))
 						: theme.fg("success", ICONS.done);
 				const displayItems = getDisplayItems(aggregator.messages);
 				const finalOutput = getResultFinalOutput(aggregator);
@@ -607,8 +634,11 @@ export function renderSubagentResult(
 					if (item.type === "toolCall") {
 						container.addChild(
 							new Text(
-								treePrefix(false, theme) +
+								treeBlock(
+									theme,
+									false,
 									formatToolCall(item.name, item.args, theme.fg.bind(theme)),
+								),
 								0,
 								0,
 							),
@@ -640,7 +670,7 @@ export function renderSubagentResult(
 			const rIcon = rFailed
 				? theme.fg("error", ICONS.fail)
 				: rRunning
-					? theme.fg("warning", spinFrame(0))
+					? theme.fg("warning", spinFrame(tick))
 					: theme.fg("success", ICONS.done);
 			const collapsed = getCollapsedDisplayItems(r);
 			const finalOutput = getResultFinalOutput(r).trim();
@@ -658,7 +688,7 @@ export function renderSubagentResult(
 			const rIcon = aggregatorFailed
 				? theme.fg("error", ICONS.fail)
 				: aggregatorRunning
-					? theme.fg("warning", spinFrame(0))
+					? theme.fg("warning", spinFrame(tick))
 					: theme.fg("success", ICONS.done);
 			const collapsed = getCollapsedDisplayItems(aggregator);
 			const finalOutput = getResultFinalOutput(aggregator).trim();

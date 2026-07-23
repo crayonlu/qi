@@ -59,8 +59,24 @@ export default function (pi: ExtensionAPI) {
 			return renderSubagentCall(args, theme);
 		},
 
-		renderResult(result, options, theme) {
-			return renderSubagentResult(result, options, theme);
+		renderResult(result, options, theme, context) {
+			const state = context.state as {
+				spinTimer?: ReturnType<typeof setInterval>;
+				tick?: number;
+			};
+			if (options.isPartial && !context.isError) {
+				if (!state.spinTimer) {
+					state.spinTimer = setInterval(() => context.invalidate(), 120);
+					if (typeof state.spinTimer === "object" && "unref" in state.spinTimer) {
+						(state.spinTimer as NodeJS.Timeout).unref?.();
+					}
+				}
+				state.tick = (state.tick ?? 0) + 1;
+			} else if (state.spinTimer) {
+				clearInterval(state.spinTimer);
+				state.spinTimer = undefined;
+			}
+			return renderSubagentResult(result, options, theme, state.tick ?? 0);
 		},
 	});
 

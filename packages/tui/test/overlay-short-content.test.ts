@@ -58,4 +58,38 @@ describe("TUI overlay with short content", () => {
 
 		tui.stop();
 	});
+
+	it("bottom-center overlay keeps short content near the bottom (no half-screen gap)", async () => {
+		const terminal = new VirtualTerminal(80, 24);
+		const tui = new TUI(terminal);
+
+		tui.addChild(new SimpleContent(["HEADER", "EDITOR"]));
+		tui.showOverlay(new SimpleOverlay(), {
+			anchor: "bottom-center",
+			width: "100%",
+			margin: { bottom: 3 },
+		});
+
+		tui.start();
+		await terminal.waitForRender();
+
+		const viewport = terminal.getViewport();
+		const editorRow = viewport.findIndex((line) => line.includes("EDITOR"));
+		const overlayBotRow = viewport.findIndex((line) => line.includes("OVERLAY_BOT"));
+
+		assert.ok(editorRow >= 0, "EDITOR should be visible");
+		assert.ok(overlayBotRow >= 0, "OVERLAY_BOT should be visible");
+		// Content is bottom-aligned; overlay sits just above the reserved input gap.
+		assert.ok(editorRow >= 18, `EDITOR should sit near bottom, got row ${editorRow}`);
+		assert.ok(
+			overlayBotRow < editorRow,
+			`overlay should be above editor (overlay=${overlayBotRow}, editor=${editorRow})`,
+		);
+		assert.ok(
+			editorRow - overlayBotRow <= 5,
+			`gap between overlay and editor should be small, got ${editorRow - overlayBotRow}`,
+		);
+
+		tui.stop();
+	});
 });

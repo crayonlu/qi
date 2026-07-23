@@ -1,6 +1,7 @@
 /**
  * Shared overlay chrome — padding, box frames, padded rules.
- * Mirrors pi-mcp-adapter boxed panels + rpiv-btw gutters (no emoji).
+ * Borders are always laid out with visibleWidth so ANSI / wide glyphs cannot
+ * shift ╭─╮ / │ │ / ╰─╯ corners (the usual “broken border” failure mode).
  */
 
 import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
@@ -21,6 +22,18 @@ export function sidePadStr(n: number = CHROME.sidePad): string {
 
 export function contentWidth(width: number, pad = CHROME.sidePad): number {
 	return Math.max(1, width - pad * 2);
+}
+
+/**
+ * Fit text into exactly `width` visible columns (truncate + pad).
+ * Never use String#padEnd for panel cells — it counts code units, not columns.
+ */
+export function fitCell(text: string, width: number): string {
+	const w = Math.max(0, width);
+	if (w === 0) return "";
+	const truncated = truncateToWidth(text, w, "…", true);
+	const pad = Math.max(0, w - visibleWidth(truncated));
+	return truncated + " ".repeat(pad);
 }
 
 /** Left-pad a single line; truncate to outer width. */
@@ -51,6 +64,34 @@ export interface BoxPanelOptions {
 	body: string[];
 	/** Optional footer / hint lines (raw). */
 	footer?: string[];
+	/**
+	 * Hard cap on total output lines (incl. borders). Body is truncated with
+	 * an ellipsis row so the bottom ╰─╯ is never clipped by TUI maxHeight.
+	 */
+	maxHeight?: number;
+}
+
+export interface SplitBoxPanelOptions {
+	title: string;
+	width: number;
+	/** Left column width (visible columns inside the box, excluding the mid │). */
+	leftWidth: number;
+	left: string[];
+	right: string[];
+	footer?: string;
+	/** Fixed body row count (pads/truncates both columns). */
+	bodyRows: number;
+}
+
+function boxBorder(theme: Theme, text: string): string {
+	return theme.fg("border", text);
+}
+
+function clampBody(body: string[], maxBody: number): string[] {
+	if (body.length <= maxBody) return body;
+	if (maxBody <= 0) return [];
+	if (maxBody === 1) return ["…"];
+	return [...body.slice(0, maxBody - 1), "…"];
 }
 
 /**
@@ -60,17 +101,24 @@ export interface BoxPanelOptions {
 export function renderBoxPanel(theme: Theme, opts: BoxPanelOptions): string[] {
 	const w = Math.max(8, opts.width);
 	const innerW = w - 2;
-	const border = (s: string) => theme.fg("border", s);
+	const border = (s: string) => boxBorder(theme, s);
 	const titleFg = (s: string) => theme.fg("accent", s);
 
 	const row = (content: string): string => {
-		const padded = truncateToWidth(` ${content}`, innerW, "…", true);
-		const fill = " ".repeat(Math.max(0, innerW - visibleWidth(padded)));
-		return border("│") + padded + fill + border("│");
+		return border("│") + fitCell(` ${content}`, innerW) + border("│");
 	};
 
 	const emptyRow = (): string => border("│") + " ".repeat(innerW) + border("│");
 	const divider = (): string => border(`├${"─".repeat(innerW)}┤`);
+
+	// title + leading empty + bottom border (+ footer chrome if present)
+	const footer = opts.footer ?? [];
+	const chrome =
+		2 /* title + leading empty */ +
+		1 /* bottom */ +
+		(footer.length > 0 ? 3 /* empty+div+empty */ + footer.length : 0);
+	const maxBody = opts.maxHeight !== undefined ? Math.max(1, opts.maxHeight - chrome) : Number.POSITIVE_INFINITY;
+	const body = clampBody(opts.body, maxBody);
 
 	const titleText = ` ${opts.title.trim()} `;
 	const borderLen = Math.max(0, innerW - visibleWidth(titleText));
@@ -81,23 +129,63 @@ export function renderBoxPanel(theme: Theme, opts: BoxPanelOptions): string[] {
 		emptyRow(),
 	];
 
-	if (opts.body.length === 0) {
+	if (body.length === 0) {
 		lines.push(emptyRow());
 	} else {
-		for (const line of opts.body) {
+		for (const line of body) {
 			lines.push(row(line));
 		}
 	}
 
-	if (opts.footer && opts.footer.length > 0) {
+	if (footer.length > 0) {
 		lines.push(emptyRow());
 		lines.push(divider());
 		lines.push(emptyRow());
-		for (const line of opts.footer) {
+		for (const line of footer) {
 			lines.push(row(line));
 		}
 	}
 
+	lines.push(border(`╰${"─".repeat(innerW)}╯`));
+	return lines;
+}
+
+/**
+ * Two-column box used by Agent View. Column widths always sum to inner width
+ * so ┬/┴ junctions stay aligned with the mid │ on every row.
+ */
+export function renderSplitBoxPanel(theme: Theme, opts: SplitBoxPanelOptions): string[] {
+	const w = Math.max(16, opts.width);
+	const innerW = w - 2;
+	const leftW = Math.max(4, Math.min(opts.leftWidth, innerW - 6));
+	const rightW = Math.max(4, innerW - leftW - 1);
+	const border = (s: string) => boxBorder(theme, s);
+	const titleFg = (s: string) => theme.fg("accent", s);
+
+	const titleText = ` ${opts.title.trim()} `;
+	const borderLen = Math.max(0, innerW - visibleWidth(titleText));
+	const leftB = Math.floor(borderLen / 2);
+	const rightB = borderLen - leftB;
+
+	const lines: string[] = [
+		border(`╭${"─".repeat(leftB)}`) + titleFg(titleText) + border(`${"─".repeat(rightB)}╮`),
+		border(`├${"─".repeat(leftW)}┬${"─".repeat(rightW)}┤`),
+	];
+
+	for (let i = 0; i < opts.bodyRows; i++) {
+		lines.push(
+			border("│") +
+				fitCell(opts.left[i] ?? "", leftW) +
+				border("│") +
+				fitCell(opts.right[i] ?? "", rightW) +
+				border("│"),
+		);
+	}
+
+	lines.push(border(`├${"─".repeat(leftW)}┴${"─".repeat(rightW)}┤`));
+	if (opts.footer) {
+		lines.push(border("│") + fitCell(theme.fg("dim", ` ${opts.footer}`), innerW) + border("│"));
+	}
 	lines.push(border(`╰${"─".repeat(innerW)}╯`));
 	return lines;
 }
@@ -108,7 +196,5 @@ export function renderBanner(theme: Theme, label: string, detail: string, width:
 	const prefix = `${pad}${label} `;
 	const avail = Math.max(0, width - visibleWidth(prefix));
 	const q = truncateToWidth(detail.replace(/\s+/g, " ").trim(), avail, "…", false);
-	const raw = prefix + q;
-	const padded = raw + " ".repeat(Math.max(0, width - visibleWidth(raw)));
-	return theme.bg("customMessageBg", theme.fg("customMessageText", padded));
+	return theme.bg("customMessageBg", theme.fg("customMessageText", fitCell(prefix + q, width)));
 }
