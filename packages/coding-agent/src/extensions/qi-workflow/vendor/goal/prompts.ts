@@ -81,10 +81,34 @@ function goalModeRules(goalLabel: string) {
 		"- Before completion, treat completion as unproven and audit requirement by requirement. For every explicit requirement, artifact, command, test, gate, invariant, and deliverable, inspect authoritative evidence and match verification scope to requirement scope.",
 		"- Weak, indirect, missing, or merely consistent evidence is not enough; gather stronger evidence and keep working.",
 		`- Only call the goal_complete tool after evidence proves every requirement of ${goalLabel} is satisfied and no required work remains. Pass this exact goal_id and never reuse an id from an older, stopped, replaced, or cleared turn.`,
+		"- Calling goal_complete is not the end of the user conversation: after it succeeds, leave a short visible wrap-up that states what was achieved and how it was verified.",
 		"- Use goal_blocked only at a true impasse after the same blocker recurs for at least three consecutive goal turns, with concrete evidence that user or external action is required. Never use it merely because work is hard, slow, uncertain, incomplete, needs ordinary clarification, or hit a recoverable failure.",
 		"- After a blocked goal is resumed, start a fresh three-turn blocker audit before using goal_blocked again.",
 		"- If the goal is incomplete at the end of a turn, expect automatic continuation and keep working from the current state.",
 	].join("\n");
+}
+
+/** Tool-result text after a successful goal_complete — keeps the agent turn open for a user-visible wrap-up. */
+export function buildGoalCompleteToolResultText(
+	summary: string,
+	options?: { nextQueued?: string },
+): string {
+	const lines = [`Goal complete: ${summary}`];
+	if (options?.nextQueued) {
+		lines.push(`Next goal queued: ${options.nextQueued}`);
+	}
+	lines.push(
+		"",
+		"Reply to the user now with a short visible wrap-up covering what was achieved and how it was verified.",
+		"Calling goal_complete is not the end of the user conversation.",
+	);
+	if (options?.nextQueued) {
+		lines.push(
+			"Do not start the next goal yourself — the harness will advance the queue after you finish.",
+		);
+	}
+	lines.push("Do not call more tools unless the user asks.");
+	return lines.join("\n");
 }
 
 function formatBudget(goal: GoalPromptContext) {

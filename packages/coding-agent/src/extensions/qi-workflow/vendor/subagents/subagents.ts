@@ -41,7 +41,7 @@ export default function (pi: ExtensionAPI) {
 			"A single blocking subagent call should be used only when independent context, high-volume output isolation, or an external review is worth waiting for; otherwise do the task in the main agent.",
 			"For one-shot parallel work, use a single subagent call with tasks instead of repeated subagent_spawn calls, even when the user explicitly requests multiple agents.",
 			"When subagent_spawn is available, use it only when detached delegation has a concrete parallel, isolation, or specialization benefit; otherwise keep the work in the main agent.",
-			"After detached spawn, continue useful non-overlapping work when available, or call subagent_wait when coordination is the only useful next action; do not yield permanently while delegated work remains unresolved.",
+			"After detached spawn, continue useful non-overlapping work when available. Completions are pushed automatically and wake the main agent — do not poll with subagent_wait or subagent_messages as the primary path; subagent_wait is optional short sync only.",
 			"Consume detached completion messages and synthesize their results before finishing; interrupt or close agents that are no longer needed.",
 			"Use subagent parallel mode with 2-4 parallel read-only subagents when work has broad independent branches; prefer scout or reviewer for fan-out and add an aggregator when synthesis helps.",
 			"Use more than 4 subagent tasks only when clearly justified by distinct independent branches, and stay within the existing hard max 8 parallel tasks.",

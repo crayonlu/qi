@@ -41,6 +41,8 @@ function createUiContext(
 		setTheme: (_theme: string | Theme) => ({ success: false, error: "Theme switching not available in tests" }),
 		getToolsExpanded: () => false,
 		setToolsExpanded: () => {},
+		setTranscriptSource: () => {},
+		getTranscriptSource: () => ({ kind: "main" as const }),
 	};
 }
 

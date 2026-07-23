@@ -109,7 +109,7 @@ function detailLines(item: RosterItem | undefined, theme: Theme): string[] {
 class AgentViewPanel implements Component {
 	private tui: TUI;
 	private theme: Theme;
-	private done: (result: undefined) => void;
+	private done: (result: { agentId: string } | undefined) => void;
 	private selected = 0;
 	private detailScroll = 0;
 	private detailAutoFollow = true;
@@ -121,7 +121,7 @@ class AgentViewPanel implements Component {
 	private disposed = false;
 	private includeClosed = true;
 
-	constructor(tui: TUI, theme: Theme, done: (result: undefined) => void) {
+	constructor(tui: TUI, theme: Theme, done: (result: { agentId: string } | undefined) => void) {
 		this.tui = tui;
 		this.theme = theme;
 		this.done = done;
@@ -158,6 +158,15 @@ class AgentViewPanel implements Component {
 		if (matchesKey(data, "escape") || data.toLowerCase() === "q") {
 			this.dispose();
 			this.done(undefined);
+			return;
+		}
+		if (matchesKey(data, "enter")) {
+			const items = this.items();
+			const selected = items[this.selected];
+			if (selected?.kind === "stateful") {
+				this.dispose();
+				this.done({ agentId: selected.agent.id });
+			}
 			return;
 		}
 		if (matchesKey(data, "up") || data.toLowerCase() === "k") {
@@ -263,7 +272,7 @@ class AgentViewPanel implements Component {
 		}
 		lines.push(theme.fg("border", `├${"─".repeat(rosterWidth)}┴${"─".repeat(detailWidth)}┤`));
 		const position = items.length ? `${this.selected + 1}/${items.length}` : "0/0";
-		const footer = ` ↑↓/jk · PgUp/PgDn · c closed · Esc · ${position}`;
+		const footer = ` ↑↓/jk · Enter focus · PgUp/PgDn · c closed · Esc · ${position}`;
 		lines.push(theme.fg("border", "│") + fitCell(theme.fg("dim", footer), innerWidth) + theme.fg("border", "│"));
 		lines.push(theme.fg("border", `╰${"─".repeat(innerWidth)}╯`));
 		return lines.map((line) => truncateToWidth(line, width));
@@ -280,9 +289,15 @@ class AgentViewPanel implements Component {
 	}
 }
 
-export async function openAgentView(ctx: { ui: Pick<ExtensionUIContext, "custom">; hasUI?: boolean }): Promise<void> {
-	await ctx.ui.custom<void>((tui, theme, _keybindings, done) => new AgentViewPanel(tui, theme, done), {
-		overlay: true,
-		overlayOptions: CENTER_OVERLAY,
-	});
+export async function openAgentView(ctx: {
+	ui: Pick<ExtensionUIContext, "custom">;
+	hasUI?: boolean;
+}): Promise<{ agentId: string } | undefined> {
+	return ctx.ui.custom<{ agentId: string } | undefined>(
+		(tui, theme, _keybindings, done) => new AgentViewPanel(tui, theme, done),
+		{
+			overlay: true,
+			overlayOptions: CENTER_OVERLAY,
+		},
+	);
 }

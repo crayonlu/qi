@@ -12,6 +12,7 @@ import type { JobEntity, McpServerState, QiWorkflowState, TaskEntity } from "../
 import { countActiveAgents } from "../vendor/subagents/agent-bridge.ts";
 import { statusThemeColor } from "./status-color.ts";
 import { alertFrame, goalIcon, ICON_GAP, ICONS, planIcon, spinFrame, withIcon } from "./status-icons.ts";
+import { viewingAgentId } from "./transcript-focus.ts";
 
 export const QI_FOOTER_STATUS_KEY = "qi";
 
@@ -176,6 +177,12 @@ export function buildFooterText(state: QiWorkflowState, tick = 0, th?: Theme): s
 	const agents = countActiveAgents();
 	if (agents > 0) {
 		rest.push(chip(th, liveGlyph(th, tick, ICONS.active, "thinkingText"), `agents=${agents}`, "thinkingText"));
+	}
+
+	const focused = viewingAgentId();
+	if (focused) {
+		const short = focused.split(/[_-]/).pop()?.slice(0, 8) ?? focused.slice(0, 8);
+		rest.unshift(chip(th, th.fg("accent", ICONS.active), `@${short}`, "accent"));
 	}
 
 	const tasks = state.tasks.filter(isActiveTask).length;

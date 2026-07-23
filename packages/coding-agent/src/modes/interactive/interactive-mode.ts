@@ -371,6 +371,14 @@ export class InteractiveMode {
 
 	// Tool output expansion state
 	private toolOutputExpanded = false;
+	/** Extension Agent View: alternate chat-column message source. */
+	private transcriptOverride:
+		| undefined
+		| {
+				agentId: string;
+				label?: string;
+				getMessages: () => AgentMessage[];
+		  };
 
 	// Thinking block visibility state
 	private hideThinkingBlock = false;
@@ -2221,7 +2229,43 @@ export class InteractiveMode {
 			},
 			getToolsExpanded: () => this.toolOutputExpanded,
 			setToolsExpanded: (expanded) => this.setToolsExpanded(expanded),
+			setTranscriptSource: (source) => this.setTranscriptSource(source),
+			getTranscriptSource: () => this.getTranscriptSource(),
 		};
+	}
+
+	private getTranscriptSource(): { kind: "main" } | { kind: "agent"; agentId: string; label?: string } {
+		if (!this.transcriptOverride) return { kind: "main" };
+		return {
+			kind: "agent",
+			agentId: this.transcriptOverride.agentId,
+			label: this.transcriptOverride.label,
+		};
+	}
+
+	private setTranscriptSource(
+		source:
+			| undefined
+			| { kind: "main" }
+			| {
+					kind: "agent";
+					agentId: string;
+					label?: string;
+					getMessages: () => AgentMessage[];
+			  },
+	): void {
+		if (!source || source.kind === "main") {
+			this.transcriptOverride = undefined;
+		} else {
+			this.transcriptOverride = {
+				agentId: source.agentId,
+				label: source.label,
+				getMessages: source.getMessages,
+			};
+		}
+		this.rebuildChatFromMessages();
+		this.footer.invalidate();
+		this.ui.requestRender();
 	}
 
 	/**
@@ -2585,6 +2629,11 @@ export class InteractiveMode {
 		// Set up handlers on defaultEditor - they use this.editor for text access
 		// so they work correctly regardless of which editor is active
 		this.defaultEditor.onEscape = () => {
+			if (this.transcriptOverride && !this.session.isStreaming && !this.editor.getText().trim()) {
+				this.setTranscriptSource({ kind: "main" });
+				this.setExtensionStatus("qi-focus", undefined);
+				return;
+			}
 			if (this.session.isStreaming) {
 				this.restoreQueuedMessagesToEditor({ abort: true });
 			} else if (this.session.isBashRunning) {
@@ -2882,6 +2931,8 @@ export class InteractiveMode {
 
 		this.footer.invalidate();
 
+		const chatLockedToAgent = this.transcriptOverride !== undefined;
+
 		switch (event.type) {
 			case "agent_start":
 				this.pendingTools.clear();
@@ -2914,7 +2965,7 @@ export class InteractiveMode {
 				break;
 
 			case "entry_appended":
-				if (event.entry.type === "custom") {
+				if (!chatLockedToAgent && event.entry.type === "custom") {
 					this.addCustomEntryToChat(event.entry);
 					this.ui.requestRender();
 				}
@@ -2932,6 +2983,7 @@ export class InteractiveMode {
 				break;
 
 			case "message_start":
+				if (chatLockedToAgent) break;
 				if (event.message.role === "custom") {
 					this.addMessageToChat(event.message);
 					this.ui.requestRender();
@@ -2955,6 +3007,7 @@ export class InteractiveMode {
 				break;
 
 			case "message_update":
+				if (chatLockedToAgent) break;
 				if (this.streamingComponent && event.message.role === "assistant") {
 					this.streamingMessage = event.message;
 					this.streamingComponent.updateContent(this.streamingMessage);
@@ -2990,6 +3043,7 @@ export class InteractiveMode {
 				break;
 
 			case "message_end":
+				if (chatLockedToAgent) break;
 				if (event.message.role === "user") break;
 				if (this.streamingComponent && event.message.role === "assistant") {
 					this.streamingMessage = event.message;
@@ -3030,6 +3084,7 @@ export class InteractiveMode {
 				break;
 
 			case "tool_execution_start": {
+				if (chatLockedToAgent) break;
 				let component = this.pendingTools.get(event.toolCallId);
 				if (!component) {
 					component = new ToolExecutionComponent(
@@ -3054,6 +3109,7 @@ export class InteractiveMode {
 			}
 
 			case "tool_execution_update": {
+				if (chatLockedToAgent) break;
 				const component = this.pendingTools.get(event.toolCallId);
 				if (component) {
 					component.updateResult({ ...event.partialResult, isError: false }, true);
@@ -3063,6 +3119,7 @@ export class InteractiveMode {
 			}
 
 			case "tool_execution_end": {
+				if (chatLockedToAgent) break;
 				const component = this.pendingTools.get(event.toolCallId);
 				if (component) {
 					component.updateResult({ ...event.result, isError: event.isError });
@@ -3543,6 +3600,20 @@ export class InteractiveMode {
 
 	private rebuildChatFromMessages(): void {
 		this.chatContainer.clear();
+		if (this.transcriptOverride) {
+			const label = this.transcriptOverride.label ?? this.transcriptOverride.agentId;
+			this.chatContainer.addChild(
+				new Text(theme.fg("accent", `@${label}  ·  Agent View  ·  Esc returns to @main`), 1, 0),
+			);
+			this.chatContainer.addChild(new Spacer(1));
+			const messages = this.transcriptOverride.getMessages();
+			if (messages.length === 0) {
+				this.chatContainer.addChild(new Text(theme.fg("dim", "No transcript for this agent yet."), 1, 0));
+			} else {
+				this.renderSessionItems(messages);
+			}
+			return;
+		}
 		this.renderSessionEntries(this.sessionManager.buildContextEntries());
 	}
 

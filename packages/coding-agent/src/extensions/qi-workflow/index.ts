@@ -18,7 +18,7 @@ import {
 	registerBtwLifecycleHooks,
 } from "./runtime/index.ts";
 import { registerQiWorkflowTools } from "./tools/register.ts";
-import { subscribeQiUi } from "./ui/index.ts";
+import { resetTranscriptFocus, subscribeQiUi } from "./ui/index.ts";
 
 /**
  * Built-in Qi workflow extension.
@@ -76,6 +76,7 @@ export default function qiWorkflowExtension(pi: ExtensionAPI): void {
 		evictTodoSession(ctx.sessionManager.getSessionId());
 		jobManager.shutdownKillAll();
 		void mcpManager.shutdown();
+		resetTranscriptFocus();
 	});
 
 	pi.on("before_agent_start", (event, ctx) => {

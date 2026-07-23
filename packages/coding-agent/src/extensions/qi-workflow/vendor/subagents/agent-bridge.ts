@@ -18,6 +18,7 @@ export type ForegroundRun = {
 type StatefulAccessor = {
 	list: (includeClosed?: boolean) => ManagedAgent[];
 	get?: (id: string) => ManagedAgent | undefined;
+	followUp?: (id: string, task: string) => Promise<ManagedAgent>;
 };
 
 type Listener = () => void;
@@ -47,6 +48,13 @@ export function listStatefulAgents(includeClosed = false): ManagedAgent[] {
 
 export function getStatefulAgent(id: string): ManagedAgent | undefined {
 	return stateful?.get?.(id);
+}
+
+export function followUpStatefulAgent(id: string, task: string): Promise<ManagedAgent> {
+	if (!stateful?.followUp) {
+		return Promise.reject(new Error("Stateful subagents are not initialized"));
+	}
+	return stateful.followUp(id, task);
 }
 
 export function upsertForegroundRun(run: ForegroundRun): void {
