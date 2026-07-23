@@ -55,8 +55,8 @@ export default function (pi: ExtensionAPI) {
 			return executeSubagent(toolCallId, params, signal, onUpdate, ctx);
 		},
 
-		renderCall(args, theme) {
-			return renderSubagentCall(args, theme);
+		renderCall(args, theme, context) {
+			return renderSubagentCall(args, theme, context);
 		},
 
 		renderResult(result, options, theme, context) {

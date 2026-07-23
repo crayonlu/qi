@@ -239,76 +239,73 @@ export function agentActivityPreview(result: SingleResult, max = 64): string {
 	return flattenOneLine(last.name, max);
 }
 
+/**
+ * Collapsed agent row: prefer task/prompt while running so the call+result
+ * trees do not both dump tool activity. Done/error still show outcome.
+ */
+export function agentCollapsedPreview(result: SingleResult, max = 64): string {
+	const final = getResultFinalOutput(result).trim();
+	if (final) {
+		const first = final
+			.split("\n")
+			.map((l) => l.replace(/^#+\s*/, "").trim())
+			.find(Boolean);
+		return flattenOneLine(first ?? final, max);
+	}
+	if (isResultError(result) && result.errorMessage) {
+		return flattenOneLine(result.errorMessage, max);
+	}
+	if (result.task?.trim()) return flattenOneLine(result.task, max);
+	return agentActivityPreview(result, max);
+}
+
 function agentSummaryRow(
 	theme: Theme,
 	result: SingleResult,
 	opts: { icon: string; label?: string; isLast: boolean },
 ): string {
 	const label = opts.label ?? result.agent;
-	const preview = agentActivityPreview(result);
+	const preview = agentCollapsedPreview(result);
 	const body = `${opts.icon} ${theme.fg("accent", label)}${theme.fg("dim", ` · ${preview}`)}`;
 	return treeBlock(theme, opts.isLast, body);
 }
 
-export function renderSubagentCall(args: SubagentParams, theme: Theme) {
+/**
+ * Call framing: header only. Once execution starts, return empty so the
+ * result tree is the single layout (no duplicate agent trees).
+ */
+export function renderSubagentCall(
+	args: SubagentParams,
+	theme: Theme,
+	context?: { executionStarted?: boolean },
+) {
+	if (context?.executionStarted) {
+		return new Container();
+	}
 	const scope: AgentScope = args.agentScope ?? "user";
 	if (args.chain && args.chain.length > 0) {
-		let text =
+		const text =
 			theme.fg("toolTitle", theme.bold("subagent ")) +
 			theme.fg("accent", `chain (${args.chain.length} steps)`) +
-			theme.fg("muted", ` [${scope}]`);
-		for (let i = 0; i < Math.min(args.chain.length, 3); i++) {
-			const step = args.chain[i];
-			const cleanTask = step.task.replace(/\{previous\}/g, "").trim();
-			const preview = cleanTask.length > 40 ? `${cleanTask.slice(0, 40)}...` : cleanTask;
-			const last = i === Math.min(args.chain.length, 3) - 1 && args.chain.length <= 3;
-			text +=
-				"\n" +
-				treePrefix(last, theme) +
-				theme.fg("accent", step.agent) +
-				theme.fg("dim", ` ${preview}`);
-		}
-		if (args.chain.length > 3)
-			text += `\n${treePrefix(true, theme)}${theme.fg("muted", `+${args.chain.length - 3} more`)}`;
+			theme.fg("muted", ` [${scope}]`) +
+			theme.fg("dim", "  starting…");
 		return new Text(text, 0, 0);
 	}
 	if (args.tasks && args.tasks.length > 0) {
-		let text =
+		const text =
 			theme.fg("toolTitle", theme.bold("subagent ")) +
 			theme.fg("accent", `parallel (${args.tasks.length} tasks)`) +
-			theme.fg("muted", ` [${scope}]`);
-		const show = args.tasks.slice(0, 3);
-		for (let i = 0; i < show.length; i++) {
-			const t = show[i];
-			const preview = t.task.length > 40 ? `${t.task.slice(0, 40)}...` : t.task;
-			const last = i === show.length - 1 && args.tasks.length <= 3 && !args.aggregator;
-			text += `\n${treePrefix(last, theme)}${theme.fg("accent", t.agent)}${theme.fg("dim", ` ${preview}`)}`;
-		}
-		if (args.tasks.length > 3)
-			text += `\n${treePrefix(!args.aggregator, theme)}${theme.fg("muted", `+${args.tasks.length - 3} more`)}`;
-		if (args.aggregator) {
-			const preview =
-				args.aggregator.task.length > 40
-					? `${args.aggregator.task.slice(0, 40)}...`
-					: args.aggregator.task;
-			text += `\n${treePrefix(true, theme)}${theme.fg("muted", "fan-in → ")}${theme.fg("accent", args.aggregator.agent)}${theme.fg(
-				"dim",
-				` ${preview}`,
-			)}`;
-		}
+			theme.fg("muted", ` [${scope}]`) +
+			theme.fg("dim", "  starting…");
 		return new Text(text, 0, 0);
 	}
 	const agentName = args.agent || "...";
-	const preview = args.task
-		? args.task.length > 60
-			? `${args.task.slice(0, 60)}...`
-			: args.task
-		: "...";
-	let text =
+	const preview = args.task ? flattenOneLine(args.task, 60) : "...";
+	const text =
 		theme.fg("toolTitle", theme.bold("subagent ")) +
 		theme.fg("accent", agentName) +
-		theme.fg("muted", ` [${scope}]`);
-	text += `\n${treePrefix(true, theme)}${theme.fg("dim", preview)}`;
+		theme.fg("muted", ` [${scope}]`) +
+		theme.fg("dim", `  ${preview}`);
 	return new Text(text, 0, 0);
 }
 
@@ -350,7 +347,7 @@ export function renderSubagentResult(
 			if (isError && r.errorMessage)
 				container.addChild(new Text(theme.fg("error", `Error: ${r.errorMessage}`), 0, 0));
 			container.addChild(new Spacer(1));
-			container.addChild(new Text(theme.fg("muted", "─── Task ───"), 0, 0));
+			container.addChild(new Text(theme.fg("muted", "─── Prompt ───"), 0, 0));
 			container.addChild(new Text(theme.fg("dim", r.task), 0, 0));
 			container.addChild(new Spacer(1));
 			container.addChild(new Text(theme.fg("muted", "─── Output ───"), 0, 0));
@@ -399,15 +396,15 @@ export function renderSubagentResult(
 		}
 		if (isPartial && !isError) {
 			container.addChild(
-				new Text(treeBlock(theme, true, theme.fg("dim", agentActivityPreview(r))), 0, 0),
+				new Text(treeBlock(theme, true, theme.fg("dim", agentCollapsedPreview(r))), 0, 0),
 			);
 		} else if (finalOutput.trim()) {
 			container.addChild(
-				new Text(treeBlock(theme, true, theme.fg("dim", agentActivityPreview(r))), 0, 0),
+				new Text(treeBlock(theme, true, theme.fg("dim", agentCollapsedPreview(r))), 0, 0),
 			);
 		} else if (collapsed.items.length > 0) {
 			container.addChild(
-				new Text(treeBlock(theme, true, theme.fg("dim", agentActivityPreview(r))), 0, 0),
+				new Text(treeBlock(theme, true, theme.fg("dim", agentCollapsedPreview(r))), 0, 0),
 			);
 		} else {
 			container.addChild(new Text(theme.fg("muted", "(no output)"), 0, 0));
@@ -415,7 +412,7 @@ export function renderSubagentResult(
 		const usageStr = formatResultUsageStats(r);
 		const stats = formatDoneStats(theme, { tools: toolCount, usage: usageStr, partial: isPartial });
 		if (stats) container.addChild(new Text(stats, 0, 0));
-		if (!isPartial) container.addChild(new Text(theme.fg("muted", "(Ctrl+O to expand)"), 0, 0));
+		container.addChild(new Text(theme.fg("muted", "(Ctrl+O to expand prompt)"), 0, 0));
 		return container;
 	}
 
@@ -451,8 +448,9 @@ export function renderSubagentResult(
 				new Text(
 					icon +
 						" " +
-						theme.fg("toolTitle", theme.bold("chain ")) +
-						theme.fg("accent", `${successCount}/${details.results.length} steps`),
+						theme.fg("toolTitle", theme.bold("subagent chain ")) +
+						theme.fg("accent", `${successCount}/${details.results.length} steps`) +
+						theme.fg("muted", ` [${details.agentScope}]`),
 					0,
 					0,
 				),
@@ -476,7 +474,8 @@ export function renderSubagentResult(
 						0,
 					),
 				);
-				container.addChild(new Text(theme.fg("muted", "Task: ") + theme.fg("dim", r.task), 0, 0));
+				container.addChild(new Text(theme.fg("muted", "Prompt:"), 0, 0));
+				container.addChild(new Text(theme.fg("dim", r.task), 0, 0));
 				if (rFailed && r.errorMessage)
 					container.addChild(new Text(theme.fg("error", `Error: ${r.errorMessage}`), 0, 0));
 
@@ -515,12 +514,13 @@ export function renderSubagentResult(
 			return container;
 		}
 
-		// Collapsed: one summary row per step (no tool dump / prose dump).
+		// Collapsed: one summary row per step (prompt preview; tools under Ctrl+O).
 		const lines: string[] = [
 			withIcon(
 				icon,
-				theme.fg("toolTitle", theme.bold("chain ")) +
-					theme.fg("accent", `${successCount}/${details.results.length} steps`),
+				theme.fg("toolTitle", theme.bold("subagent chain ")) +
+					theme.fg("accent", `${successCount}/${details.results.length} steps`) +
+					theme.fg("muted", ` [${details.agentScope}]`),
 			),
 		];
 		for (let i = 0; i < details.results.length; i++) {
@@ -541,7 +541,7 @@ export function renderSubagentResult(
 		}
 		const usageStr = formatUsageStats(aggregateUsage(details.results));
 		if (usageStr) lines.push(theme.fg("dim", `Total: ${usageStr}`));
-		lines.push(theme.fg("muted", "(Ctrl+O to expand)"));
+		lines.push(theme.fg("muted", "(Ctrl+O to expand prompt)"));
 		return new Text(lines.join("\n"), 0, 0);
 	}
 
@@ -580,7 +580,7 @@ export function renderSubagentResult(
 			const container = new Container();
 			container.addChild(
 				new Text(
-					`${icon} ${theme.fg("toolTitle", theme.bold("parallel "))}${theme.fg("accent", status)}`,
+					`${icon} ${theme.fg("toolTitle", theme.bold("subagent parallel "))}${theme.fg("accent", status)}${theme.fg("muted", ` [${details.agentScope}]`)}`,
 					0,
 					0,
 				),
@@ -600,7 +600,8 @@ export function renderSubagentResult(
 				container.addChild(
 					new Text(`${theme.fg("muted", "─── ") + theme.fg("accent", r.agent)} ${rIcon}`, 0, 0),
 				);
-				container.addChild(new Text(theme.fg("muted", "Task: ") + theme.fg("dim", r.task), 0, 0));
+				container.addChild(new Text(theme.fg("muted", "Prompt:"), 0, 0));
+				container.addChild(new Text(theme.fg("dim", r.task), 0, 0));
 				if (rFailed && r.errorMessage)
 					container.addChild(new Text(theme.fg("error", `Error: ${r.errorMessage}`), 0, 0));
 
@@ -646,9 +647,8 @@ export function renderSubagentResult(
 						0,
 					),
 				);
-				container.addChild(
-					new Text(theme.fg("muted", "Task: ") + theme.fg("dim", aggregator.task), 0, 0),
-				);
+				container.addChild(new Text(theme.fg("muted", "Prompt:"), 0, 0));
+				container.addChild(new Text(theme.fg("dim", aggregator.task), 0, 0));
 				if (aggregatorFailed && aggregator.errorMessage)
 					container.addChild(
 						new Text(theme.fg("error", `Error: ${aggregator.errorMessage}`), 0, 0),
@@ -685,9 +685,9 @@ export function renderSubagentResult(
 			return container;
 		}
 
-		// Collapsed: header + one line per agent (+ fan-in), never dump tool trees / reports.
+		// Collapsed: one tree — agent + prompt preview; tools/full prompt under Ctrl+O.
 		const rows: string[] = [
-			`${icon} ${theme.fg("toolTitle", theme.bold("parallel "))}${theme.fg("accent", status)}`,
+			`${icon} ${theme.fg("toolTitle", theme.bold("subagent parallel "))}${theme.fg("accent", status)}${theme.fg("muted", ` [${details.agentScope}]`)}`,
 		];
 		const agentCount = details.results.length + (aggregator ? 1 : 0);
 		for (let i = 0; i < details.results.length; i++) {
@@ -725,7 +725,7 @@ export function renderSubagentResult(
 			const usageStr = formatUsageStats(aggregateUsage(usageResults));
 			if (usageStr) rows.push(theme.fg("dim", `Total: ${usageStr}`));
 		}
-		rows.push(theme.fg("muted", "(Ctrl+O to expand)"));
+		rows.push(theme.fg("muted", "(Ctrl+O to expand prompt)"));
 		return new Text(rows.join("\n"), 0, 0);
 	}
 
