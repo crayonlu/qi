@@ -225,10 +225,10 @@ export function registerQiWorkflowTools(pi: ExtensionAPI): void {
 		name: "plan_update",
 		label: "Plan Update",
 		description:
-			"Patch plan sections (discoveries, assumptions, decisions, steps, verification, unresolvedQuestions). Resets plan to draft. Requires an active plan from /plan <goal> first — this tool cannot create a plan. Optional revision for optimistic concurrency.",
+			"Patch plan sections (discoveries, assumptions, decisions, steps, verification, unresolvedQuestions). Resets plan to draft. If no plan exists yet, automatically starts one (from the active goal/todo or goalHint). Optional revision for optimistic concurrency.",
 		promptGuidelines: [
-			"Requires an active plan. If you get 'No active plan', ask the user to run /plan <goal> (or wait until they do) before calling plan_update.",
-			"Do not invent plan_start — plans are started only via /plan.",
+			"Call plan_update directly whenever you need to record plan sections — you do not need /plan first; a draft plan is auto-created if missing.",
+			"Prefer updating steps/discoveries as you learn; use plan_mode_complete when the plan is decision-ready.",
 		],
 		parameters: Type.Object({
 			discoveries: Type.Optional(Type.Array(Type.String())),
@@ -237,6 +237,7 @@ export function registerQiWorkflowTools(pi: ExtensionAPI): void {
 			steps: Type.Optional(Type.Array(Type.String())),
 			verification: Type.Optional(Type.Array(Type.String())),
 			unresolvedQuestions: Type.Optional(Type.Array(Type.String())),
+			goalHint: Type.Optional(Type.String({ description: "Goal used only when auto-creating a missing plan" })),
 			revision: Type.Optional(Type.Number({ description: "Expected plan revision" })),
 		}),
 		async execute(_toolCallId, params) {
@@ -245,14 +246,23 @@ export function registerQiWorkflowTools(pi: ExtensionAPI): void {
 				if (params[key] !== undefined) patch[key] = params[key];
 			}
 			if (Object.keys(patch).length === 0) return failResult("At least one section patch is required");
-			const result = workflowController.apply((state) => updatePlanSections(state, patch, params.revision));
+			const hadPlan =
+				!!workflowController.getState().plan && workflowController.getState().plan?.status !== "discarded";
+			const result = workflowController.apply((state) =>
+				updatePlanSections(state, patch, params.revision, params.goalHint),
+			);
 			if (!result.ok) return failResult(result.error);
 			const changed = Object.keys(patch).join(", ");
-			return textResult(`Plan updated (rev ${result.value.revision}, ${changed}). Status: draft. ${DETAILS_HINT}`, {
-				action: "plan_update",
-				revision: result.value.revision,
-				status: result.value.status,
-			});
+			const created = hadPlan ? "" : ` Created plan "${result.value.goal}".`;
+			return textResult(
+				`Plan updated (rev ${result.value.revision}, ${changed}). Status: draft.${created} ${DETAILS_HINT}`,
+				{
+					action: "plan_update",
+					revision: result.value.revision,
+					status: result.value.status,
+					created: !hadPlan,
+				},
+			);
 		},
 		renderCall(args, theme) {
 			const keys = sectionKeys.filter((k) => args[k] !== undefined);
@@ -272,23 +282,26 @@ export function registerQiWorkflowTools(pi: ExtensionAPI): void {
 	pi.registerTool({
 		name: PLAN_MODE_COMPLETE_TOOL_NAME,
 		label: "Plan Mode Complete",
-		description: "Mark the draft plan ready with a decision-ready Markdown plan body (typed markPlanReady).",
+		description:
+			"Mark the draft plan ready with a decision-ready Markdown plan body. Auto-creates a draft plan if none exists.",
 		parameters: Type.Object({
 			plan: Type.String({ description: "Complete decision-ready implementation plan in Markdown" }),
 			revision: Type.Optional(Type.Number({ description: "Expected plan revision" })),
+			goalHint: Type.Optional(Type.String({ description: "Goal used only when auto-creating a missing plan" })),
 		}),
 		async execute(_toolCallId, params) {
 			const normalized = normalizePlanBody(params.plan);
 			if (!normalized.ok) return failResult(normalized.error);
-			// Persist plan body into steps when empty so ready conversion has content.
+			// Persist plan body into steps when empty / missing so ready conversion has content.
 			const current = workflowController.getState().plan;
-			if (current && current.sections.steps.length === 0) {
+			const needsSteps = !current || current.status === "discarded" || current.sections.steps.length === 0;
+			if (needsSteps) {
 				const patched = workflowController.apply((state) =>
-					updatePlanSections(state, { steps: [normalized.plan] }, params.revision),
+					updatePlanSections(state, { steps: [normalized.plan] }, params.revision, params.goalHint),
 				);
 				if (!patched.ok) return failResult(patched.error);
 			}
-			const result = workflowController.apply((state) => markPlanReady(state, params.revision));
+			const result = workflowController.apply((state) => markPlanReady(state, params.revision, params.goalHint));
 			if (!result.ok) return failResult(result.error);
 			const completed = planModeCompleted(normalized.plan);
 			return {

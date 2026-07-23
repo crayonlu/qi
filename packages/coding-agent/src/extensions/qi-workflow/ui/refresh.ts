@@ -1,6 +1,7 @@
 import type { ExtensionUIContext } from "../../../core/extensions/types.ts";
 import type { WorkflowController } from "../controller.ts";
 import type { QiWorkflowState } from "../domain/index.ts";
+import { subscribeAgentBridge } from "../vendor/subagents/agent-bridge.ts";
 import { footerNeedsAnimation, refreshFooter } from "./footer.ts";
 import { refreshBoard } from "./work-board.ts";
 
@@ -51,8 +52,14 @@ export function subscribeQiUi(ctx: QiUiHost, controller: WorkflowController): ()
 		syncAnim(state);
 	});
 
+	const unsubAgents = subscribeAgentBridge(() => {
+		refreshQiUi(ctx, controller, tick);
+		syncAnim(controller.getState());
+	});
+
 	return () => {
 		unsub();
+		unsubAgents();
 		stopAnim();
 	};
 }

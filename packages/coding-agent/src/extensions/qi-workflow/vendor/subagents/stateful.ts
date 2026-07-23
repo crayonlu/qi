@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import * as path from "node:path";
 import type { ExtensionAPI, ExtensionContext } from "../pi-coding-agent-shim.ts";
 import { StringEnum } from "@earendil-works/pi-ai";
+import { Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 import { discoverAgents, type AgentScope, isThinkingLevel } from "./agents.ts";
 import { buildContextSnapshot, type ContextMode, redactPrivateText } from "./context.ts";
@@ -28,6 +29,7 @@ import {
 	type ParentRuntimeSnapshot,
 } from "./in-process-transport.ts";
 import { WorkspaceManager } from "./workspace.ts";
+import { clearAgentBridge, notifyAgentBridgeChanged, setStatefulAgentAccessor } from "./agent-bridge.ts";
 
 const ContextModeSchema = Type.Union([
 	StringEnum(["none", "all", "summary"] as const),
@@ -99,6 +101,7 @@ export function registerStatefulSubagents(
 			idleTtlMs: settings.idleTtlMs,
 			onChange: async (agents) => {
 				await sessionPersistence.save(agents);
+				notifyAgentBridgeChanged();
 				if (generation !== runtimeGeneration) return;
 				for (const agent of agents) {
 					for (const message of agent.mailbox) {
@@ -131,6 +134,10 @@ export function registerStatefulSubagents(
 			for (const message of agent.mailbox) seenMessageIds.add(message.id);
 		}
 		registry.restore(restored);
+		setStatefulAgentAccessor({
+			list: (includeClosed) => requireRegistry().list(includeClosed),
+			get: (id) => requireRegistry().get(id),
+		});
 		const sweepEveryMs = Math.max(1_000, Math.min(settings.idleTtlMs ?? 60 * 60 * 1000, 60_000));
 		sweepTimer = setInterval(() => {
 			void registry?.sweepExpired().catch((error: unknown) => {
@@ -203,6 +210,7 @@ export function registerStatefulSubagents(
 		await registry?.shutdown();
 		registry = undefined;
 		persistence = undefined;
+		clearAgentBridge();
 		if (cleanupError && ctx.hasUI) {
 			const reason = cleanupError instanceof Error ? cleanupError.message : String(cleanupError);
 			ctx.ui.notify(
@@ -245,6 +253,28 @@ export function registerStatefulSubagents(
 				}),
 			),
 		}),
+		renderCall(args, theme) {
+			const agent = args.agent || "…";
+			const task = args.task
+				? args.task.length > 60
+					? `${args.task.slice(0, 60)}…`
+					: args.task
+				: "(streaming…)";
+			const scope = args.agentScope ?? "user";
+			return new Text(
+				theme.fg("toolTitle", theme.bold("subagent_spawn ")) +
+					theme.fg("accent", agent) +
+					theme.fg("muted", ` [${scope}]`) +
+					`\n${theme.fg("dim", "└─ ")}${theme.fg("dim", task)}`,
+				0,
+				0,
+			);
+		},
+		renderResult(result, _options, theme) {
+			const text = result.content[0]?.type === "text" ? result.content[0].text : "";
+			const err = text.startsWith("Error") || text.startsWith("Canceled");
+			return new Text(theme.fg(err ? "error" : "success", text.slice(0, 160)), 0, 0);
+		},
 		async execute(_id, params, _signal, _update, ctx) {
 			const scope = (params.agentScope ?? "user") as AgentScope;
 			assertSubagentDepthAllowed();

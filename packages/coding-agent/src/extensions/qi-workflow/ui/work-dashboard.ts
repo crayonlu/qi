@@ -30,11 +30,11 @@ import { jobManager } from "../runtime/job-manager.ts";
 import { renderBoxPanel } from "./chrome.ts";
 import { CENTER_OVERLAY, termCols } from "./layout.ts";
 import { colorStatus } from "./status-color.ts";
-import { todoStatusGlyph } from "./status-icons.ts";
+import { statusGlyph, todoStatusGlyph } from "./status-icons.ts";
 
 function listGlyph(theme: Theme, tab: DashboardTab, status: string): string {
 	if (tab === "todo") return colorStatus(theme, status, todoStatusGlyph(status));
-	return colorStatus(theme, status, "●");
+	return colorStatus(theme, status, statusGlyph(status));
 }
 
 function listTitle(theme: Theme, tab: DashboardTab, status: string, title: string, focused: boolean): string {

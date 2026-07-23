@@ -160,6 +160,30 @@ describe("qi-workflow plan transitions", () => {
 		expect(discarded.ok && discarded.state.plan?.status).toBe("discarded");
 	});
 
+	it("auto-creates a plan on plan_update / markPlanReady when missing", () => {
+		let s = state();
+		s = setGoal(s, "CS2 Blast research").state;
+		const updated = updatePlanSections(s, { steps: ["Search results"], discoveries: ["Need sources"] });
+		expect(updated.ok).toBe(true);
+		if (!updated.ok) return;
+		expect(updated.state.plan?.goal).toContain("CS2 Blast");
+		expect(updated.state.plan?.status).toBe("draft");
+		expect(updated.state.plan?.sections.steps).toEqual(["Search results"]);
+
+		const empty = state();
+		const ready = markPlanReady(empty);
+		expect(ready.ok).toBe(false); // still needs steps
+
+		const withBody = updatePlanSections(empty, { steps: ["Do research"] });
+		expect(withBody.ok).toBe(true);
+		if (!withBody.ok) return;
+		const marked = markPlanReady(withBody.state);
+		expect(marked.ok).toBe(true);
+		if (!marked.ok) return;
+		expect(marked.state.plan?.status).toBe("ready");
+		expect(marked.state.plan?.goal).toBe("Untitled plan");
+	});
+
 	it("rejects ready without steps and rejects prose-driven ready", () => {
 		const s = startPlan(state(), "No steps").state;
 		expect(markPlanReady(s).ok).toBe(false);

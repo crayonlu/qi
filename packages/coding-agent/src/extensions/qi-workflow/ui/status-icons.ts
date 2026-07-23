@@ -1,84 +1,112 @@
 /**
- * Qi status icons — pure Unicode symbols (no emoji, no Nerd Font PUA).
- * Aligned with the sindresorhus/figures + clisymbols CLI vocabulary so
- * glyphs stay readable under NO_COLOR and common terminal fonts.
+ * Qi status icons — rpiv-todo geometric circle family.
  *
- * Refs:
- * - https://github.com/sindresorhus/figures
- * - https://github.com/r-lib/clisymbols
+ * Vocabulary (shape + fill conveys state; color comes from status-color):
+ *   ○ idle / pending / draft / paused
+ *   ◐ active / running / in_progress / connecting
+ *   ● solid success / connected / heading-has-active
+ *   ✓ completed / ready (overlay check)
+ *   ✗ failed / blocked / error
+ *   ⊘ cancelled / disabled / deleted
+ *   ├─ └─ tree chrome (board lists)
+ *   ⛓ dependency suffix
+ *
+ * Always leave a gap between glyph and label via `withIcon()`.
  */
 
-/** Braille spinner (CLI de facto; not emoji). */
+/** Braille spinner for live footer ticks. */
 export const SPIN_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"] as const;
 
 export function spinFrame(tick = 0): string {
 	return SPIN_FRAMES[Math.abs(tick) % SPIN_FRAMES.length]!;
 }
 
-/** Soft pulse for alert attention (circle filled / double). */
-export const ALERT_FRAMES = ["◉", "◎"] as const;
+/** Soft pulse for alerts — stays in the circle family. */
+export const ALERT_FRAMES = ["●", "○"] as const;
 
 export function alertFrame(tick = 0): string {
 	return ALERT_FRAMES[Math.abs(tick) % ALERT_FRAMES.length]!;
 }
 
-/**
- * Semantic icons (figures mainSymbols-style).
- * Each is a single text-presentation symbol — never emoji codepoints.
- */
+/** Single space between icon and following text (rpiv-todo row style). */
+export const ICON_GAP = " ";
+
+/** `◐ label` — never glue glyph to text. */
+export function withIcon(icon: string, label: string, gap = ICON_GAP): string {
+	if (!icon) return label;
+	if (!label) return icon;
+	return `${icon}${gap}${label}`;
+}
+
 export const ICONS = {
-	/** figures.cross */
-	fail: "✖",
-	/** figures.circleFilled — active focus */
-	goalActive: "◉",
-	/** double vertical bar — paused */
-	goalPaused: "‖",
-	/** ASCII-safe alert (avoid emoji-presentation ⚠) */
-	goalBlocked: "!",
-	/** figures.circleDotted — draft / unset */
-	planDraft: "◌",
-	/** figures.tick */
-	planReady: "✔",
-	/** figures.pointer */
-	planExecuting: "❯",
-	/** Aggregate todos label (footer/board heading) */
+	idle: "○",
+	active: "◐",
+	solid: "●",
+	done: "✓",
+	fail: "✗",
+	cancel: "⊘",
+	deps: "⛓",
+	treeBranch: "├─",
+	treeLast: "└─",
+	/** @deprecated alias — use idle */
 	todos: "○",
-	/** ASCII-safe blocked */
-	todoBlocked: "!",
-	/** rpiv-todo overlay: in progress */
-	todoActive: "◐",
-	/** rpiv-todo overlay: pending */
 	todoPending: "○",
-	/** rpiv-todo overlay: completed */
-	todoDone: "✔",
-	/** Dependency chain */
+	todoActive: "◐",
+	todoDone: "✓",
+	todoBlocked: "✗",
 	todoDeps: "⛓",
-	/** figures.arrowRight */
-	tasks: "→",
-	/** figures.squareSmallFilled — background work block */
-	jobs: "◼",
-	/** figures.bullet */
+	goalActive: "●",
+	goalPaused: "○",
+	goalBlocked: "✗",
+	planDraft: "○",
+	planReady: "✓",
+	planExecuting: "◐",
+	tasks: "◐",
+	tasksIdle: "○",
+	jobs: "◐",
+	jobsIdle: "○",
 	mcpOk: "●",
-	/** figures.cross */
-	mcpErr: "✖",
-	/** figures.circleDotted — connecting */
-	mcpConn: "◌",
-	/** figures.arrowLeft — rewind / restore */
-	rewind: "←",
+	mcpConn: "◐",
+	mcpErr: "✗",
+	mcpOff: "○",
+	mcpDisabled: "⊘",
+	rewind: "○",
 } as const;
 
-export function todoStatusGlyph(status: string): string {
+/** Generic workflow status → geometric glyph. */
+export function statusGlyph(status: string): string {
 	switch (status) {
 		case "in_progress":
-			return ICONS.todoActive;
-		case "blocked":
-			return ICONS.todoBlocked;
+		case "running":
+		case "executing":
+		case "connecting":
+		case "terminating":
+		case "active":
+			return ICONS.active;
 		case "completed":
+		case "ready":
+		case "answered":
+		case "exited":
+			return ICONS.done;
+		case "connected":
+			return ICONS.solid;
+		case "failed":
+		case "error":
+		case "killed":
+		case "blocked":
+			return ICONS.fail;
 		case "cancelled":
-			return ICONS.todoDone;
+		case "discarded":
+		case "disabled":
+		case "deleted":
+			return ICONS.cancel;
 		default:
-			return ICONS.todoPending;
+			return ICONS.idle;
 	}
+}
+
+export function todoStatusGlyph(status: string): string {
+	return statusGlyph(status);
 }
 
 export function goalIcon(status: string): string {
@@ -91,4 +119,36 @@ export function planIcon(status: string): string {
 	if (status === "ready") return ICONS.planReady;
 	if (status === "executing") return ICONS.planExecuting;
 	return ICONS.planDraft;
+}
+
+export function taskIcon(status: string): string {
+	return statusGlyph(status);
+}
+
+export function jobIcon(status: string): string {
+	return statusGlyph(status);
+}
+
+export function mcpIcon(status: string, enabled = true): string {
+	if (!enabled) return ICONS.mcpDisabled;
+	switch (status) {
+		case "connected":
+			return ICONS.mcpOk;
+		case "connecting":
+			return ICONS.mcpConn;
+		case "error":
+			return ICONS.mcpErr;
+		default:
+			return ICONS.mcpOff;
+	}
+}
+
+/** Colored glyph + spaced label for board/dashboard rows. */
+export function themedIconLabel(
+	theme: { fg: (color: string, text: string) => string },
+	color: string,
+	icon: string,
+	label: string,
+): string {
+	return `${theme.fg(color, icon)}${ICON_GAP}${label}`;
 }

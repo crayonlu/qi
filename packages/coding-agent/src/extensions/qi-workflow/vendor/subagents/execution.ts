@@ -22,6 +22,7 @@ import {
 } from "./runner.ts";
 import { formatModelRef, pickSubagentModel } from "./pick-model.ts";
 import { readSubagentSettings, resolveSubagentThinkingLevel } from "./settings.ts";
+import { removeForegroundRun, upsertForegroundRun } from "./agent-bridge.ts";
 
 const MAX_PARALLEL_TASKS = 8;
 const MAX_CONCURRENCY = 4;
@@ -51,24 +52,55 @@ interface StatusContext {
 	ui: { setStatus: (key: string, value: string | undefined) => void };
 }
 
-function startSubagentStatus(ctx: StatusContext, toolCallId: string, status: string) {
+function startSubagentStatus(
+	ctx: StatusContext,
+	toolCallId: string,
+	status: string,
+	meta?: { mode: "single" | "parallel" | "chain"; label: string; agentNames: string[] },
+) {
 	let cleared = false;
 
 	const update = (nextStatus: string) => {
 		if (cleared) return;
 		activeStatuses.set(toolCallId, nextStatus);
 		publishSubagentStatus(ctx);
+		if (meta) {
+			upsertForegroundRun({
+				id: toolCallId,
+				mode: meta.mode,
+				label: meta.label,
+				state: "running",
+				updatedAt: Date.now(),
+				agentNames: meta.agentNames,
+				summary: nextStatus,
+			});
+		}
 	};
 
 	update(status);
 
 	return {
 		update,
-		clear() {
+		clear(finalState: "completed" | "failed" = "completed") {
 			if (cleared) return;
 			cleared = true;
 			activeStatuses.delete(toolCallId);
 			publishSubagentStatus(ctx);
+			if (meta) {
+				upsertForegroundRun({
+					id: toolCallId,
+					mode: meta.mode,
+					label: meta.label,
+					state: finalState,
+					updatedAt: Date.now(),
+					agentNames: meta.agentNames,
+					summary: status,
+				});
+				// Drop shortly after completion so Agent View stays live-focused.
+				setTimeout(() => removeForegroundRun(toolCallId), 30_000).unref?.();
+			} else {
+				removeForegroundRun(toolCallId);
+			}
 		},
 	};
 }
@@ -198,7 +230,11 @@ export async function executeSubagent(
 			if (params.chain && params.chain.length > 0) {
 				const results: SingleResult[] = [];
 				let previousOutput = "";
-				const status = startSubagentStatus(ctx, toolCallId, chainStatus(0, params.chain.length));
+				const status = startSubagentStatus(ctx, toolCallId, chainStatus(0, params.chain.length), {
+					mode: "chain",
+					label: `chain (${params.chain.length})`,
+					agentNames: params.chain.map((s) => s.agent),
+				});
 
 				try {
 					for (let i = 0; i < params.chain.length; i++) {
@@ -244,6 +280,7 @@ export async function executeSubagent(
 						const isError = isResultError(result);
 						if (isError) {
 							const errorMsg = formatResultFailure(result);
+							status.clear("failed");
 							return {
 								content: [{ type: "text", text: `Chain stopped at step ${i + 1} (${step.agent}): ${errorMsg}` }],
 								details: { ...makeDetails("chain")(results), isError: true },
@@ -273,7 +310,11 @@ export async function executeSubagent(
 						details: makeDetails("parallel")([]),
 					};
 
-				const status = startSubagentStatus(ctx, toolCallId, parallelStatus(0, params.tasks.length, params.tasks.length));
+				const status = startSubagentStatus(ctx, toolCallId, parallelStatus(0, params.tasks.length, params.tasks.length), {
+					mode: "parallel",
+					label: `parallel (${params.tasks.length})`,
+					agentNames: params.tasks.map((t) => t.agent),
+				});
 
 				try {
 					// Track all results for streaming updates
@@ -456,7 +497,11 @@ export async function executeSubagent(
 			}
 
 			if (params.agent && params.task) {
-				const status = startSubagentStatus(ctx, toolCallId, singleStatus(params.agent));
+				const status = startSubagentStatus(ctx, toolCallId, singleStatus(params.agent), {
+					mode: "single",
+					label: params.agent,
+					agentNames: [params.agent],
+				});
 
 				try {
 					const result = await runSingleAgent(
@@ -477,6 +522,7 @@ export async function executeSubagent(
 					const isError = isResultError(result);
 					if (isError) {
 						const errorMsg = formatResultFailure(result);
+						status.clear("failed");
 						return {
 							content: [{ type: "text", text: `Agent ${result.stopReason || "failed"}: ${errorMsg}` }],
 							details: { ...makeDetails("single")([result]), isError: true },
