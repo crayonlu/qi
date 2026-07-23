@@ -27,6 +27,7 @@ import {
 	type WorkflowEntity,
 } from "../domain/index.ts";
 import { jobManager } from "../runtime/job-manager.ts";
+import { CENTER_OVERLAY, termCols } from "./layout.ts";
 import { colorStatus } from "./status-color.ts";
 
 export type DashboardTab = "plan" | "todo" | "workflow" | "task" | "job";
@@ -40,16 +41,12 @@ const TAB_LABEL: Record<DashboardTab, string> = {
 	job: "Job",
 };
 
-const CENTER_OVERLAY = {
-	anchor: "center" as const,
-	width: "95%" as const,
-	minWidth: 60,
-	maxHeight: "85%" as const,
-	margin: 1,
-};
-
-function termCols(): number {
-	return process.stdout.columns ?? 80;
+function todoRank(status: string): number {
+	if (status === "in_progress") return 0;
+	if (status === "blocked") return 1;
+	if (status === "pending") return 2;
+	if (status === "completed") return 3;
+	return 4;
 }
 
 function shortId(id: string): string {
@@ -85,12 +82,12 @@ function itemsForTab(state: QiWorkflowState, tab: DashboardTab): ListItem[] {
 		case "todo":
 			return state.todos
 				.slice()
-				.sort((a, b) => a.position - b.position)
+				.sort((a, b) => todoRank(a.status) - todoRank(b.status) || a.position - b.position)
 				.map((t) => ({
 					id: t.id,
 					status: t.status,
 					title: t.text,
-					meta: `#${t.position}`,
+					meta: t.status === "completed" || t.status === "cancelled" ? `done · #${t.position}` : `#${t.position}`,
 				}));
 		case "workflow":
 			return state.workflows.map((w) => ({
@@ -420,7 +417,7 @@ class WorkDashboard implements Component {
 		if (todo.description) lines.push(...wrapTextWithAnsi(th.fg("muted", todo.description), width));
 		if (todo.activeForm) lines.push(truncateToWidth(th.fg("accent", `active: ${todo.activeForm}`), width));
 		if (todo.blockedBy && todo.blockedBy.length > 0) {
-			lines.push(truncateToWidth(th.fg("warning", `blockedBy: ${todo.blockedBy.join(", ")}`), width));
+			lines.push(truncateToWidth(th.fg("muted", `blockedBy: ${todo.blockedBy.join(", ")}`), width));
 		}
 		if (todo.blockReason) lines.push(...wrapTextWithAnsi(th.fg("error", `blocked: ${todo.blockReason}`), width));
 		if (todo.verification) lines.push(...wrapTextWithAnsi(th.fg("success", `ok: ${todo.verification}`), width));
@@ -507,7 +504,16 @@ class WorkDashboard implements Component {
 
 		lines.push(th.fg("accent", "─".repeat(w)));
 		const tabBar = TABS.map((t) => {
-			const label = TAB_LABEL[t];
+			let label = TAB_LABEL[t];
+			if (t === "todo") {
+				const completed = this.state().todos.filter((x) => x.status === "completed").length;
+				const active = this.state().todos.filter(
+					(x) => x.status === "pending" || x.status === "in_progress" || x.status === "blocked",
+				).length;
+				if (completed > 0 || active > 0) {
+					label = `${label} ${active}${completed > 0 ? `/${completed}` : ""}`;
+				}
+			}
 			return t === this.tab ? th.fg("accent", `[${label}]`) : th.fg("dim", label);
 		}).join(" ");
 		lines.push(truncateToWidth(tabBar, w));
@@ -524,7 +530,9 @@ class WorkDashboard implements Component {
 			const start = items.length === 0 ? 0 : Math.max(0, Math.min(this.index - 5, items.length - maxRows));
 
 			if (items.length === 0) {
-				const left = truncateToWidth(th.fg("dim", "  (empty)"), listWidth);
+				const emptyHint =
+					this.tab === "todo" ? "  (no todos — completed items stay listed here after /todos done)" : "  (empty)";
+				const left = truncateToWidth(th.fg("dim", emptyHint), listWidth);
 				const rightLines = this.renderDetail(detailWidth);
 				lines.push(truncateToWidth(`${left} │ ${rightLines[0] ?? ""}`, w));
 				for (let i = 1; i < rightLines.length; i++) {
@@ -543,7 +551,10 @@ class WorkDashboard implements Component {
 							prefix +
 								colorStatus(th, it.status, "●") +
 								" " +
-								th.fg(focused ? "accent" : "text", it.title) +
+								th.fg(
+									focused ? "accent" : it.status === "completed" || it.status === "cancelled" ? "dim" : "text",
+									it.title,
+								) +
 								(it.meta ? th.fg("dim", ` ${it.meta}`) : ""),
 							listWidth,
 						);

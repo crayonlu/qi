@@ -582,9 +582,10 @@ export function registerQiWorkflowCommands(pi: ExtensionAPI): void {
 	pi.registerCommand("mcp", {
 		description: "Discover and manage MCP servers",
 		category: "integrations",
-		argumentHint: "inspect | enable <server> | disable <server> | reconnect <server> | auth <server>",
+		argumentHint:
+			"inspect | enable <server> | disable <server> | reconnect <server> | auth <server> | logout <server>",
 		getArgumentCompletions: (prefix) => {
-			const actions = ["inspect", "enable", "disable", "reconnect", "auth"];
+			const actions = ["inspect", "enable", "disable", "reconnect", "auth", "logout"];
 			const trimmed = prefix.trim();
 			const spaceIndex = prefix.indexOf(" ");
 			if (spaceIndex === -1) {
@@ -601,7 +602,14 @@ export function registerQiWorkflowCommands(pi: ExtensionAPI): void {
 		handler: async (args, ctx) => {
 			mcpManager.discover(ctx.cwd);
 			const { cmd, rest } = firstToken(args);
-			if (cmd === "inspect" || cmd === "enable" || cmd === "disable" || cmd === "reconnect" || cmd === "auth") {
+			if (
+				cmd === "inspect" ||
+				cmd === "enable" ||
+				cmd === "disable" ||
+				cmd === "reconnect" ||
+				cmd === "auth" ||
+				cmd === "logout"
+			) {
 				if (!rest) {
 					notifyResult(ctx, false, `Usage: /mcp ${cmd} <server>`);
 					return;
@@ -632,6 +640,11 @@ export function registerQiWorkflowCommands(pi: ExtensionAPI): void {
 					} catch (err) {
 						notifyResult(ctx, false, err instanceof Error ? err.message : String(err));
 					}
+					return;
+				}
+				if (cmd === "logout") {
+					const result = mcpManager.logout(rest);
+					notifyResult(ctx, result.ok, result.message);
 					return;
 				}
 				const info = mcpManager.inspect(rest);
@@ -674,6 +687,7 @@ export function registerQiWorkflowCommands(pi: ExtensionAPI): void {
 					await mcpManager.reconnect(name, ctx.cwd);
 				},
 				auth: async (name) => mcpManager.auth(name, ctx.cwd),
+				logout: async (name) => mcpManager.logout(name),
 				inspect: async (name) => {
 					const info = mcpManager.inspect(name);
 					if (!info) return `Server not found: ${name}`;

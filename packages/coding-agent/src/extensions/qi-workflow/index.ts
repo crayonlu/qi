@@ -8,7 +8,7 @@ import {
 } from "./adapters/index.ts";
 import { registerQiWorkflowCommands } from "./commands/register.ts";
 import { workflowController } from "./controller.ts";
-import { PLAN_INSTRUCTIONS } from "./prompts/plan.ts";
+import { planInstructions } from "./prompts/plan.ts";
 import {
 	attachAutoRewind,
 	attachGoalLifecycle,
@@ -78,12 +78,12 @@ export default function qiWorkflowExtension(pi: ExtensionAPI): void {
 		void mcpManager.shutdown();
 	});
 
-	pi.on("before_agent_start", (event) => {
+	pi.on("before_agent_start", (event, ctx) => {
 		const state = workflowController.getState();
 		const plan = state.plan;
 		if (plan && (plan.status === "draft" || plan.status === "ready")) {
 			return {
-				systemPrompt: `${event.systemPrompt}\n\n${PLAN_INSTRUCTIONS}`,
+				systemPrompt: `${event.systemPrompt}\n\n${planInstructions({ hasUI: ctx.hasUI })}`,
 			};
 		}
 	});

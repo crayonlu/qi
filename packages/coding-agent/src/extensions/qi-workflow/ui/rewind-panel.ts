@@ -4,6 +4,7 @@ import type { ExtensionUIContext } from "../../../core/extensions/types.ts";
 import type { Theme } from "../../../modes/interactive/theme/theme.ts";
 import type { WorkflowController } from "../controller.ts";
 import type { RestoreScope, RewindCheckpoint } from "../domain/index.ts";
+import { CENTER_OVERLAY, termCols } from "./layout.ts";
 
 export interface RewindPanelApi {
 	restore(checkpointId: string, scope: RestoreScope): Promise<void>;
@@ -13,19 +14,7 @@ export interface RewindPanelApi {
 	undoLast?(): Promise<void>;
 }
 
-const CENTER_OVERLAY = {
-	anchor: "center" as const,
-	width: "95%" as const,
-	minWidth: 60,
-	maxHeight: "85%" as const,
-	margin: 1,
-};
-
 const SCOPES: RestoreScope[] = ["files", "conversation", "all"];
-
-function termCols(): number {
-	return process.stdout.columns ?? 80;
-}
 
 class RewindPanel implements Component {
 	private tui: TUI;

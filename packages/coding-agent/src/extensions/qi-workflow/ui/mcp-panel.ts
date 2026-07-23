@@ -5,6 +5,7 @@ import type { Theme } from "../../../modes/interactive/theme/theme.ts";
 import type { WorkflowController } from "../controller.ts";
 import type { McpServerState } from "../domain/index.ts";
 import { setMcpEnabled } from "../domain/index.ts";
+import { CENTER_OVERLAY, termCols } from "./layout.ts";
 import { colorStatus } from "./status-color.ts";
 
 export interface McpPanelApi {
@@ -12,17 +13,10 @@ export interface McpPanelApi {
 	disable(name: string): Promise<void>;
 	reconnect(name: string): Promise<void>;
 	auth?(name: string): Promise<{ ok: boolean; message: string }>;
+	logout?(name: string): Promise<{ ok: boolean; message: string }>;
 	/** Return inspect text (tools, source, errors). */
 	inspect(name: string): Promise<string>;
 }
-
-const CENTER_OVERLAY = {
-	anchor: "center" as const,
-	width: "95%" as const,
-	minWidth: 60,
-	maxHeight: "85%" as const,
-	margin: 1,
-};
 
 const CONFIG_HINT = [
 	"No MCP servers configured.",
@@ -31,10 +25,6 @@ const CONFIG_HINT = [
 	"  .pi/mcp.json",
 	"  ~/.pi/agent/mcp.json",
 ];
-
-function termCols(): number {
-	return process.stdout.columns ?? 80;
-}
 
 class McpPanel implements Component {
 	private tui: TUI;
@@ -85,7 +75,7 @@ class McpPanel implements Component {
 		this.tui.requestRender();
 	}
 
-	private async runAction(action: "enable" | "disable" | "reconnect" | "inspect" | "auth"): Promise<void> {
+	private async runAction(action: "enable" | "disable" | "reconnect" | "inspect" | "auth" | "logout"): Promise<void> {
 		const server = this.servers()[this.index];
 		if (!server) return;
 		try {
@@ -105,6 +95,13 @@ class McpPanel implements Component {
 					this.message = "Auth not available";
 				} else {
 					const result = await this.mcpApi.auth(server.name);
+					this.message = result.message;
+				}
+			} else if (action === "logout") {
+				if (!this.mcpApi.logout) {
+					this.message = "Logout not available";
+				} else {
+					const result = await this.mcpApi.logout(server.name);
 					this.message = result.message;
 				}
 			} else {
@@ -171,6 +168,7 @@ class McpPanel implements Component {
 		else if (data === "d" || data === "D") void this.runAction("disable");
 		else if (data === "r" || data === "R") void this.runAction("reconnect");
 		else if (data === "a" || data === "A") void this.runAction("auth");
+		else if (data === "l" || data === "L") void this.runAction("logout");
 		else if (data === "i" || data === "I" || matchesKey(data, "enter") || matchesKey(data, "return")) {
 			void this.runAction("inspect");
 		}
@@ -251,7 +249,10 @@ class McpPanel implements Component {
 		lines.push("");
 		lines.push(
 			truncateToWidth(
-				th.fg("dim", "↑↓ · e enable · d disable · r reconnect · a auth · i inspect · / filter · Esc close"),
+				th.fg(
+					"dim",
+					"↑↓ · e enable · d disable · r reconnect · a auth · l logout · i inspect · / filter · Esc close",
+				),
 				w,
 			),
 		);
@@ -285,7 +286,15 @@ async function narrowMcpSelect(
 	if (!choice) return;
 	const server = servers.find((s) => choice.startsWith(s.name));
 	if (!server) return;
-	const action = await ctx.ui.select(`${server.name}`, ["Enable", "Disable", "Reconnect", "Auth", "Inspect", "Close"]);
+	const action = await ctx.ui.select(`${server.name}`, [
+		"Enable",
+		"Disable",
+		"Reconnect",
+		"Auth",
+		"Logout",
+		"Inspect",
+		"Close",
+	]);
 	if (!action || action === "Close") return;
 	try {
 		if (action === "Enable") {
@@ -299,6 +308,9 @@ async function narrowMcpSelect(
 		} else if (action === "Auth") {
 			const result = await mcpApi.auth?.(server.name);
 			ctx.ui.notify(result?.message ?? "Auth not available", result?.ok === false ? "error" : "info");
+		} else if (action === "Logout") {
+			const result = await mcpApi.logout?.(server.name);
+			ctx.ui.notify(result?.message ?? "Logout not available", result?.ok === false ? "error" : "info");
 		} else {
 			const text = await mcpApi.inspect(server.name);
 			await ctx.ui.select("Inspect", text.split("\n").slice(0, 30));

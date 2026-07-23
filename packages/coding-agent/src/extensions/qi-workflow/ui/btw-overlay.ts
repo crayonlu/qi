@@ -5,13 +5,7 @@ import type { Theme } from "../../../modes/interactive/theme/theme.ts";
 import type { WorkflowController } from "../controller.ts";
 import { type BtwDraft, clearBtw } from "../domain/index.ts";
 import { clearBtwHistory } from "../runtime/btw-side-turn.ts";
-
-const OVERLAY_OPTIONS = {
-	anchor: "bottom-center" as const,
-	width: "100%" as const,
-	maxHeight: "80%" as const,
-	margin: { left: 0, right: 0, bottom: 0 },
-};
+import { BOTTOM_OVERLAY } from "./layout.ts";
 
 type BtwCloseResult = { attachSummary?: string };
 
@@ -194,7 +188,7 @@ export async function showBtwOverlay(
 
 	const result = await ctx.ui.custom<BtwCloseResult>(
 		(tui, theme, _kb, done) => new BtwOverlay(tui, theme, controller, done, sessionCtx, opts?.onAbort),
-		{ overlay: true, overlayOptions: OVERLAY_OPTIONS },
+		{ overlay: true, overlayOptions: BOTTOM_OVERLAY },
 	);
 
 	if (result?.attachSummary) {

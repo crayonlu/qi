@@ -35,17 +35,20 @@ adopted code under `vendor/LICENSE.*.md`.
 - **Plan `--plan` CLI flag** — replaced by `/plan <goal>`
 - **Plan `defaultPlanTools` / `safeSubcommands` settings** — excluded with tool-policy lockdown
 - **Goal cross-extension RPC** — Qi owns `/goal` + tools
-- **MCP proxy describe/search, direct-tools, consent, metadata-cache, split auth-start/complete, logout** — Qi MCP manager + panel/auth/proxy call/resources
+- **MCP proxy describe/search** — Qi equivalent: `/mcp` filter + inspect (tool list/source/errors) and `mcp` proxy `list`/`call`/`resources`/`read_resource`
+- **MCP direct-tools / metadata-cache / split auth-start/complete** — Qi equivalent: single `/mcp auth` + panel `a`, proxy `auth`; tools discovered via inspect/connect rather than per-tool direct registration
+- **MCP consent UX package** — Qi equivalent: user-authored `.mcp.json` / `.pi/mcp.json` / `~/.pi/agent/mcp.json`; `/mcp` enable|disable; keep-alive auto-connect only for **enabled** configured servers (not unknown hosts)
+- **MCP logout** — Qi equivalent: `/mcp logout <server>`, panel `l` / Logout, proxy `logout`/`revoke` (clears stored OAuth via `clearAllCredentials`)
 - **Process agent-turn alerts / logWatches** — poll/`wait` + dashboard
 - Optional peers: `@juicesharp/rpiv-i18n`, `@mcp-ui/ext-apps`, `recheck`
 
 ### UI (Qi owns unified surfaces)
-- **Package-local panels/overlays copied wholesale** — Qi uses one dashboard, one slash browser, one footer key (`qi`), one center-panel style (MCP/rewind/cleanup/dashboard), one bottom-overlay style (ask/btw)
-- **Todo aboveEditor tree overlay / config collapse shortcut / completed-linger** — Qi board shows activeForm/blockedBy chips + `/todos` dashboard detail; collapse via `/board`
-- **Ask multi-tab dialog, submit-picker review, side-by-side preview panes, RPC/ACP dialog-walker, ASK_USER_PROMPT_EVENT, package config guidance** — Qi sequential overlay with preview-on-focus, notes (`n`), progress `(i/n)`, collapse (`c`); headless strips tool
+- **Package-local panels/overlays copied wholesale** — Qi uses one dashboard, one slash browser, one footer key (`qi`), one center-panel frame (MCP/rewind/cleanup/dashboard via shared layout), one bottom-overlay frame (ask/btw). Surfaces keep intentional UX (ask preview/notes/progress; btw attach/abort; MCP filter)
+- **Todo aboveEditor tree overlay / config collapse shortcut / completed-linger** — Qi board shows unfinished activeForm/blockedBy chips only (focus); completed todos remain in `/todos` dashboard (active-first sort, `Todo active/completed` counts) and via todo tool `list` with `status=completed`
+- **Ask multi-tab dialog, submit-picker review, side-by-side preview panes, RPC/ACP dialog-walker, ASK_USER_PROMPT_EVENT, package config guidance** — Qi sequential overlay with preview-on-focus, notes (`n`), progress `(i/n)`, collapse (`c`); headless strips `ask_user_question` from active tools and plan/goal prompts omit ask instructions
 - **Plan package tool-selector UI / widgets / statusline-only chrome** — Qi board shows draft/ready/executing; `/plan finalize|ready` + ready menu; thinking-level via settings (not a separate panel)
 - **Rewind Esc+Esc shortcut / dedicated statusline glyph** — Qi `/rewind` panel with preview/undo; fork/tree prompts when `hasUI`
-- **MCP setup wizard, browser ui-server/app-bridge/glimpse, per-tool direct-toggle editor** — Qi `/mcp` panel with filter/auth/enable/disable/reconnect/inspect + empty config hints
+- **MCP setup wizard, browser ui-server/app-bridge/glimpse, per-tool direct-toggle editor** — Qi `/mcp` panel with filter/auth/logout/enable/disable/reconnect/inspect + empty config hints
 - **Process `/ps` log dock / pin / live stream widget** — Qi `/jobs` dashboard: logs/cancel/clear-finished; agent uses `process` tool for stdin/wait
 - **Subagent fleet overlay / Ctrl+Alt+F / watchdog slash surface** — Qi Task/Workflow dashboard + `subagent` tools
 - **Subagent file/settings `model` hard-bind** — ignored; pick from available models (same pool as `/model`) at invocation, headless inherits parent session model

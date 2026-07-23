@@ -9,17 +9,11 @@ import type { ExtensionUIContext } from "../../../core/extensions/types.ts";
 import type { Theme } from "../../../modes/interactive/theme/theme.ts";
 import type { WorkflowController } from "../controller.ts";
 import { answerQuestion, cancelQuestion, type StructuredQuestion } from "../domain/index.ts";
+import { BOTTOM_OVERLAY } from "./layout.ts";
 
 export type QuestionOverlayResult =
 	| { action: "answered"; selected: string[]; freeInput?: string; notes?: string; answerSummary: string }
 	| { action: "cancelled" };
-
-const OVERLAY_OPTIONS = {
-	anchor: "bottom-center" as const,
-	width: "100%" as const,
-	maxHeight: "80%" as const,
-	margin: { left: 0, right: 0, bottom: 0 },
-};
 
 class QuestionOverlay implements Component {
 	private tui: TUI;
@@ -276,9 +270,27 @@ class QuestionOverlay implements Component {
 		lines.push(truncateToWidth(th.fg("dim", hint), w));
 		lines.push(th.fg("accent", "─".repeat(w)));
 
+		const rows = (this.tui as TUI & { terminal?: { rows?: number } }).terminal?.rows ?? 24;
+		const maxRows = Math.max(6, Math.floor(rows * 0.8));
+		let view = lines;
+		if (lines.length > maxRows) {
+			// Keep header + hint frame; scroll options region by focusing near optionIndex.
+			const head = 3;
+			const tail = 2;
+			const body = lines.slice(head, Math.max(head, lines.length - tail));
+			const focusApprox = Math.min(body.length - 1, Math.max(0, this.optionIndex + 1));
+			const bodyBudget = Math.max(1, maxRows - head - tail);
+			const start = Math.max(0, Math.min(focusApprox - Math.floor(bodyBudget / 2), body.length - bodyBudget));
+			view = [
+				...lines.slice(0, head),
+				...body.slice(start, start + bodyBudget),
+				...lines.slice(lines.length - tail),
+			];
+		}
+
 		this.cachedWidth = width;
-		this.cachedLines = lines;
-		return lines;
+		this.cachedLines = view;
+		return view;
 	}
 
 	invalidate(): void {
@@ -302,6 +314,6 @@ export async function showQuestionOverlay(
 
 	return ctx.ui.custom<QuestionOverlayResult>(
 		(tui, theme, _kb, done) => new QuestionOverlay(tui, theme, question, controller, done),
-		{ overlay: true, overlayOptions: OVERLAY_OPTIONS },
+		{ overlay: true, overlayOptions: BOTTOM_OVERLAY },
 	);
 }

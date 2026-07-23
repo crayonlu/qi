@@ -9,6 +9,7 @@ import { workflowController } from "../controller.ts";
 import { type McpConnectionStatus, type McpServerState, setMcpEnabled, upsertMcpServer } from "../domain/index.ts";
 import { loadMcpConfig } from "../vendor/mcp/config.ts";
 import { McpLifecycleManager } from "../vendor/mcp/lifecycle.ts";
+import { clearAllCredentials } from "../vendor/mcp/mcp-auth.ts";
 import { authenticate, supportsOAuth } from "../vendor/mcp/mcp-auth-flow.ts";
 import { McpServerManager } from "../vendor/mcp/server-manager.ts";
 import type { ServerDefinition } from "../vendor/mcp/types.ts";
@@ -265,6 +266,31 @@ export class McpManager {
 		}
 	}
 
+	/** Revoke stored OAuth credentials for a server (Qi equivalent of upstream logout). */
+	logout(name: string): { ok: boolean; message: string } {
+		const config = this.configs.get(name) ?? this.listConfigs().find((c) => c.name === name);
+		if (!config && !this.list().some((s) => s.name === name)) {
+			return { ok: false, message: `MCP server not found: ${name}` };
+		}
+		clearAllCredentials(name);
+		void this.manager.close(name);
+		const current = workflowController.getState().mcpServers.find((s) => s.name === name);
+		if (current) {
+			workflowController.apply((state) =>
+				upsertMcpServer(state, {
+					name,
+					status: current.enabled === false ? "disabled" : "disconnected",
+					toolCount: 0,
+					error: undefined,
+				}),
+			);
+		}
+		return {
+			ok: true,
+			message: `Cleared stored auth for ${name}. Re-run /mcp auth ${name} when you need credentials again.`,
+		};
+	}
+
 	inspect(name: string): { server: McpServerState; tools: string[] } | undefined {
 		const server = workflowController
 			.getState()
@@ -306,7 +332,7 @@ export class McpManager {
 		pi.registerTool({
 			name: "mcp",
 			label: "MCP",
-			description: "MCP proxy: status, list, connect, call, auth, resources, read_resource.",
+			description: "MCP proxy: status, list, connect, call, auth, logout, resources, read_resource.",
 			parameters: Type.Object({
 				action: Type.Optional(Type.String()),
 				server: Type.Optional(Type.String()),
@@ -335,6 +361,12 @@ export class McpManager {
 					if (!serverName) return textResult("Error: server required", { error: "missing_server" });
 					const result = await self.auth(serverName, cwd);
 					return textResult(result.message, { action, ok: result.ok });
+				}
+
+				if (action === "logout" || action === "revoke" || action === "auth-logout") {
+					if (!serverName) return textResult("Error: server required", { error: "missing_server" });
+					const result = self.logout(serverName);
+					return textResult(result.message, { action: "logout", ok: result.ok });
 				}
 
 				if (action === "resources" || action === "list_resources") {

@@ -47,8 +47,12 @@ export function hasActiveWork(state: QiWorkflowState): boolean {
 
 function formatTodoChip(t: TodoItem): string {
 	const mark = t.status === "in_progress" ? "*" : t.status === "blocked" ? "!" : "·";
-	const label = t.status === "in_progress" && t.activeForm ? t.activeForm : t.text;
-	const deps = t.blockedBy && t.blockedBy.length > 0 ? `↩${t.blockedBy.join(",")}` : "";
+	const raw = t.status === "in_progress" && t.activeForm ? t.activeForm : t.text;
+	const label = raw.length > 28 ? `${raw.slice(0, 27)}…` : raw;
+	const deps =
+		t.blockedBy && t.blockedBy.length > 0
+			? `↩${t.blockedBy.slice(0, 2).join(",")}${t.blockedBy.length > 2 ? "…" : ""}`
+			: "";
 	return `${mark}${label}${deps}`;
 }
 

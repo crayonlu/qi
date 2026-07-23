@@ -160,4 +160,81 @@ describe("qi-workflow UI projections", () => {
 		expect(opened.value.questionIndex).toBe(1);
 		expect(opened.value.questionCount).toBe(2);
 	});
+
+	it("footer drops low-priority signals when narrow", () => {
+		const state = createEmptyState("footer-narrow");
+		state.goal = {
+			id: "g1",
+			objective: "O",
+			status: "active",
+			todoIds: [],
+			iteration: 1,
+			tokensUsed: 0,
+			timeUsedSeconds: 0,
+			baselineTokens: 0,
+			summary: "O",
+			createdAt: 1,
+			updatedAt: 1,
+			revision: 1,
+		};
+		state.plan = {
+			id: "p1",
+			goal: "P",
+			status: "ready",
+			sections: {
+				discoveries: [],
+				assumptions: [],
+				decisions: [],
+				steps: ["a"],
+				verification: [],
+				unresolvedQuestions: [],
+			},
+			summary: "P",
+			createdAt: 1,
+			updatedAt: 1,
+			revision: 1,
+		};
+		state.todos = [
+			{
+				id: "todo_1",
+				text: "T",
+				status: "pending",
+				position: 0,
+				taskIds: [],
+				summary: "T",
+				createdAt: 1,
+				updatedAt: 1,
+				revision: 1,
+			},
+		];
+		state.mcpServers = [
+			{
+				id: "m1",
+				name: "s",
+				status: "connected",
+				transport: "stdio",
+				toolCount: 1,
+				enabled: true,
+				summary: "s",
+				createdAt: 1,
+				updatedAt: 1,
+				revision: 1,
+			},
+		];
+		state.rewindCheckpoints = [
+			{
+				id: "rw1",
+				label: "resume",
+				summary: "resume",
+				createdAt: 1,
+				updatedAt: 1,
+				revision: 1,
+			},
+		];
+		const wide = buildFooterText(state, 120);
+		expect(wide).toContain("rw=1");
+		const narrow = buildFooterText(state, 40);
+		expect(narrow).toContain("goal:active");
+		expect(narrow).not.toContain("rw=1");
+	});
 });

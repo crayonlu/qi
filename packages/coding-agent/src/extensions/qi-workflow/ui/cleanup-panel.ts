@@ -9,6 +9,7 @@ import {
 	type CleanupReport,
 	setCleanupReport,
 } from "../domain/index.ts";
+import { CENTER_OVERLAY, termCols } from "./layout.ts";
 
 export interface CleanupPanelApi {
 	/** Produce a dry-run report (categories with count/bytes/paths). */
@@ -17,22 +18,10 @@ export interface CleanupPanelApi {
 	apply(categories: CleanupCategoryReport[]): Promise<void>;
 }
 
-const CENTER_OVERLAY = {
-	anchor: "center" as const,
-	width: "95%" as const,
-	minWidth: 60,
-	maxHeight: "85%" as const,
-	margin: 1,
-};
-
 function formatBytes(n: number): string {
 	if (n < 1024) return `${n}B`;
 	if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)}K`;
 	return `${(n / (1024 * 1024)).toFixed(1)}M`;
-}
-
-function termCols(): number {
-	return process.stdout.columns ?? 80;
 }
 
 class CleanupPanel implements Component {
