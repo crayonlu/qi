@@ -1,7 +1,10 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { PACKAGE_NAME, UPDATE_REPO } from "../src/config.ts";
 import {
 	checkForNewPiVersion,
 	comparePackageVersions,
+	getDistributionLatestRelease,
+	getLatestGithubReleaseTag,
 	getLatestPiRelease,
 	getLatestPiVersion,
 	isNewerPackageVersion,
@@ -9,6 +12,11 @@ import {
 
 const originalSkipVersionCheck = process.env.PI_SKIP_VERSION_CHECK;
 const originalOffline = process.env.PI_OFFLINE;
+
+beforeEach(() => {
+	delete process.env.PI_OFFLINE;
+	delete process.env.PI_SKIP_VERSION_CHECK;
+});
 
 afterEach(() => {
 	vi.unstubAllGlobals();
@@ -24,6 +32,20 @@ afterEach(() => {
 	}
 });
 
+function stubGithubLatestTag(version: string): ReturnType<typeof vi.fn> {
+	return vi.fn(async (input: string | URL) => {
+		const url = String(input);
+		if (url.includes("github.com") && url.includes("/releases/latest")) {
+			const response = new Response("", { status: 200 });
+			Object.defineProperty(response, "url", {
+				value: `https://github.com/${UPDATE_REPO ?? "crayonlu/qi"}/releases/tag/v${version}`,
+			});
+			return response;
+		}
+		return Response.json({ version });
+	});
+}
+
 describe("version checks", () => {
 	it("compares package versions", () => {
 		expect(comparePackageVersions("0.70.6", "0.70.5")).toBeGreaterThan(0);
@@ -35,11 +57,17 @@ describe("version checks", () => {
 	});
 
 	it("returns only newer versions", async () => {
-		const fetchMock = vi.fn(async () => Response.json({ version: "1.2.3" }));
+		const fetchMock = stubGithubLatestTag("1.2.3");
 		vi.stubGlobal("fetch", fetchMock);
 
 		await expect(checkForNewPiVersion("1.2.3")).resolves.toBeUndefined();
-		await expect(checkForNewPiVersion("1.2.2")).resolves.toEqual({ version: "1.2.3" });
+		const newer = await checkForNewPiVersion("1.2.2");
+		expect(fetchMock).toHaveBeenCalled();
+		if (UPDATE_REPO) {
+			expect(newer).toEqual({ version: "1.2.3", packageName: PACKAGE_NAME });
+		} else {
+			expect(newer).toEqual({ version: "1.2.3" });
+		}
 	});
 
 	it("uses the pi.dev version check api with a pi user agent", async () => {
@@ -96,5 +124,18 @@ describe("version checks", () => {
 
 		await expect(getLatestPiVersion("1.2.3")).resolves.toBe("1.2.4");
 		expect(fetchMock).toHaveBeenCalledOnce();
+	});
+
+	it("resolves distribution latest release from GitHub when updateRepo is set", async () => {
+		if (!UPDATE_REPO) return;
+		const fetchMock = stubGithubLatestTag("9.9.9");
+		vi.stubGlobal("fetch", fetchMock);
+
+		await expect(getDistributionLatestRelease("1.0.0")).resolves.toEqual({
+			version: "9.9.9",
+			packageName: PACKAGE_NAME,
+		});
+		await expect(getLatestGithubReleaseTag(UPDATE_REPO)).resolves.toBe("9.9.9");
+		expect(String(fetchMock.mock.calls[0]?.[0])).toContain(`https://github.com/${UPDATE_REPO}/releases/latest`);
 	});
 });

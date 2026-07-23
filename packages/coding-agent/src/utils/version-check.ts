@@ -1,6 +1,6 @@
 import { compare, valid } from "semver";
+import { PACKAGE_NAME, UPDATE_REPO, VERSION } from "../config.ts";
 import { getPiUserAgent } from "./pi-user-agent.ts";
-import { VERSION } from "../config.ts";
 
 const LATEST_VERSION_URL = "https://pi.dev/api/latest-version";
 const DEFAULT_VERSION_CHECK_TIMEOUT_MS = 10000;
@@ -79,15 +79,16 @@ export async function getLatestPiVersion(
  */
 export async function getLatestGithubReleaseTag(
 	repo: string,
-	options: { timeoutMs?: number } = {},
+	options: { timeoutMs?: number; userAgentVersion?: string } = {},
 ): Promise<string | undefined> {
+	if (process.env.PI_OFFLINE) return undefined;
 	const url = `https://github.com/${repo}/releases/latest`;
 	try {
 		const response = await fetch(url, {
 			redirect: "follow",
 			headers: {
-				"User-Agent": getPiUserAgent(VERSION),
-				accept: "application/json",
+				"User-Agent": getPiUserAgent(options.userAgentVersion ?? VERSION),
+				accept: "text/html,application/xhtml+xml",
 			},
 			signal: AbortSignal.timeout(options.timeoutMs ?? DEFAULT_VERSION_CHECK_TIMEOUT_MS),
 		});
@@ -105,11 +106,30 @@ export async function getLatestGithubReleaseTag(
 	}
 }
 
+/**
+ * Latest release for this distribution: fork GitHub Releases when
+ * `piConfig.updateRepo` is set, otherwise the upstream pi.dev endpoint.
+ */
+export async function getDistributionLatestRelease(
+	currentVersion: string,
+	options: { timeoutMs?: number } = {},
+): Promise<LatestPiRelease | undefined> {
+	if (UPDATE_REPO) {
+		const version = await getLatestGithubReleaseTag(UPDATE_REPO, {
+			...options,
+			userAgentVersion: currentVersion,
+		});
+		if (!version) return undefined;
+		return { version, packageName: PACKAGE_NAME };
+	}
+	return getLatestPiRelease(currentVersion, options);
+}
+
 export async function checkForNewPiVersion(currentVersion: string): Promise<LatestPiRelease | undefined> {
 	if (process.env.PI_SKIP_VERSION_CHECK) return undefined;
 
 	try {
-		const latestRelease = await getLatestPiRelease(currentVersion);
+		const latestRelease = await getDistributionLatestRelease(currentVersion);
 		if (latestRelease && isNewerPackageVersion(latestRelease.version, currentVersion)) {
 			return latestRelease;
 		}
