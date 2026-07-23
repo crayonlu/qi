@@ -50,6 +50,7 @@ export default function (pi: ExtensionAPI) {
 			"When using subagent, write self-contained tasks with file paths, context, expected output, and whether the subagent may edit files.",
 		],
 		parameters: SubagentParams,
+		executionMode: "sequential",
 
 		async execute(toolCallId, params, signal, onUpdate, ctx) {
 			return executeSubagent(toolCallId, params, signal, onUpdate, ctx);

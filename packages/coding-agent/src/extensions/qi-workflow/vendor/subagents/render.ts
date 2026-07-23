@@ -271,8 +271,8 @@ function agentSummaryRow(
 }
 
 /**
- * Call framing: header only. Once execution starts, return empty so the
- * result tree is the single layout (no duplicate agent trees).
+ * Call framing: compact header only (no agent tree). Once execution starts,
+ * return empty so the result tree is the single live layout.
  */
 export function renderSubagentCall(
 	args: SubagentParams,
@@ -284,29 +284,33 @@ export function renderSubagentCall(
 	}
 	const scope: AgentScope = args.agentScope ?? "user";
 	if (args.chain && args.chain.length > 0) {
-		const text =
+		return new Text(
 			theme.fg("toolTitle", theme.bold("subagent ")) +
-			theme.fg("accent", `chain (${args.chain.length} steps)`) +
-			theme.fg("muted", ` [${scope}]`) +
-			theme.fg("dim", "  starting…");
-		return new Text(text, 0, 0);
+				theme.fg("accent", `chain (${args.chain.length} steps)`) +
+				theme.fg("muted", ` [${scope}]`),
+			0,
+			0,
+		);
 	}
 	if (args.tasks && args.tasks.length > 0) {
-		const text =
+		return new Text(
 			theme.fg("toolTitle", theme.bold("subagent ")) +
-			theme.fg("accent", `parallel (${args.tasks.length} tasks)`) +
-			theme.fg("muted", ` [${scope}]`) +
-			theme.fg("dim", "  starting…");
-		return new Text(text, 0, 0);
+				theme.fg("accent", `parallel (${args.tasks.length} tasks)`) +
+				theme.fg("muted", ` [${scope}]`),
+			0,
+			0,
+		);
 	}
 	const agentName = args.agent || "...";
 	const preview = args.task ? flattenOneLine(args.task, 60) : "...";
-	const text =
+	return new Text(
 		theme.fg("toolTitle", theme.bold("subagent ")) +
-		theme.fg("accent", agentName) +
-		theme.fg("muted", ` [${scope}]`) +
-		theme.fg("dim", `  ${preview}`);
-	return new Text(text, 0, 0);
+			theme.fg("accent", agentName) +
+			theme.fg("muted", ` [${scope}]`) +
+			theme.fg("dim", `  ${preview}`),
+		0,
+		0,
+	);
 }
 
 export function renderSubagentResult(

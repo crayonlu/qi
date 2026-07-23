@@ -416,6 +416,8 @@ export class InteractiveMode {
 	// Extension UI state
 	private extensionSelector: ExtensionSelectorComponent | undefined = undefined;
 	private extensionInput: ExtensionInputComponent | undefined = undefined;
+	/** Serialize extension dialogs so parallel tool calls cannot orphan a select Promise. */
+	private extensionUiChain: Promise<void> = Promise.resolve();
 	private extensionEditor: ExtensionEditorComponent | undefined = undefined;
 	private extensionTerminalInputUnsubscribers = new Set<() => void>();
 
@@ -2277,44 +2279,60 @@ export class InteractiveMode {
 	/**
 	 * Show a selector for extensions.
 	 */
+	private enqueueExtensionUi<T>(run: () => Promise<T>): Promise<T> {
+		const result = this.extensionUiChain.then(run, run);
+		this.extensionUiChain = result.then(
+			() => undefined,
+			() => undefined,
+		);
+		return result;
+	}
+
 	private showExtensionSelector(
 		title: string,
 		options: string[],
 		opts?: ExtensionUIDialogOptions,
 	): Promise<string | undefined> {
-		return new Promise((resolve) => {
-			if (opts?.signal?.aborted) {
-				resolve(undefined);
-				return;
-			}
+		return this.enqueueExtensionUi(
+			() =>
+				new Promise((resolve) => {
+					if (opts?.signal?.aborted) {
+						resolve(undefined);
+						return;
+					}
 
-			const onAbort = () => {
-				this.hideExtensionSelector();
-				resolve(undefined);
-			};
-			opts?.signal?.addEventListener("abort", onAbort, { once: true });
+					const onAbort = () => {
+						this.hideExtensionSelector();
+						resolve(undefined);
+					};
+					opts?.signal?.addEventListener("abort", onAbort, { once: true });
 
-			this.extensionSelector = new ExtensionSelectorComponent(
-				title,
-				options,
-				(option) => {
-					opts?.signal?.removeEventListener("abort", onAbort);
-					this.hideExtensionSelector();
-					resolve(option);
-				},
-				() => {
-					opts?.signal?.removeEventListener("abort", onAbort);
-					this.hideExtensionSelector();
-					resolve(undefined);
-				},
-				{ tui: this.ui, timeout: opts?.timeout, onToggleToolsExpanded: () => this.toggleToolOutputExpansion() },
-			);
+					this.extensionSelector = new ExtensionSelectorComponent(
+						title,
+						options,
+						(option) => {
+							opts?.signal?.removeEventListener("abort", onAbort);
+							this.hideExtensionSelector();
+							resolve(option);
+						},
+						() => {
+							opts?.signal?.removeEventListener("abort", onAbort);
+							this.hideExtensionSelector();
+							resolve(undefined);
+						},
+						{
+							tui: this.ui,
+							timeout: opts?.timeout,
+							onToggleToolsExpanded: () => this.toggleToolOutputExpansion(),
+						},
+					);
 
-			this.editorContainer.clear();
-			this.editorContainer.addChild(this.extensionSelector);
-			this.ui.setFocus(this.extensionSelector);
-			this.ui.requestRender();
-		});
+					this.editorContainer.clear();
+					this.editorContainer.addChild(this.extensionSelector);
+					this.ui.setFocus(this.extensionSelector);
+					this.ui.requestRender();
+				}),
+		);
 	}
 
 	/**
@@ -2357,39 +2375,42 @@ export class InteractiveMode {
 		placeholder?: string,
 		opts?: ExtensionUIDialogOptions,
 	): Promise<string | undefined> {
-		return new Promise((resolve) => {
-			if (opts?.signal?.aborted) {
-				resolve(undefined);
-				return;
-			}
+		return this.enqueueExtensionUi(
+			() =>
+				new Promise((resolve) => {
+					if (opts?.signal?.aborted) {
+						resolve(undefined);
+						return;
+					}
 
-			const onAbort = () => {
-				this.hideExtensionInput();
-				resolve(undefined);
-			};
-			opts?.signal?.addEventListener("abort", onAbort, { once: true });
+					const onAbort = () => {
+						this.hideExtensionInput();
+						resolve(undefined);
+					};
+					opts?.signal?.addEventListener("abort", onAbort, { once: true });
 
-			this.extensionInput = new ExtensionInputComponent(
-				title,
-				placeholder,
-				(value) => {
-					opts?.signal?.removeEventListener("abort", onAbort);
-					this.hideExtensionInput();
-					resolve(value);
-				},
-				() => {
-					opts?.signal?.removeEventListener("abort", onAbort);
-					this.hideExtensionInput();
-					resolve(undefined);
-				},
-				{ tui: this.ui, timeout: opts?.timeout },
-			);
+					this.extensionInput = new ExtensionInputComponent(
+						title,
+						placeholder,
+						(value) => {
+							opts?.signal?.removeEventListener("abort", onAbort);
+							this.hideExtensionInput();
+							resolve(value);
+						},
+						() => {
+							opts?.signal?.removeEventListener("abort", onAbort);
+							this.hideExtensionInput();
+							resolve(undefined);
+						},
+						{ tui: this.ui, timeout: opts?.timeout },
+					);
 
-			this.editorContainer.clear();
-			this.editorContainer.addChild(this.extensionInput);
-			this.ui.setFocus(this.extensionInput);
-			this.ui.requestRender();
-		});
+					this.editorContainer.clear();
+					this.editorContainer.addChild(this.extensionInput);
+					this.ui.setFocus(this.extensionInput);
+					this.ui.requestRender();
+				}),
+		);
 	}
 
 	/**
