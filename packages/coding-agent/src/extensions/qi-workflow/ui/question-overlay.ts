@@ -1,5 +1,5 @@
 /**
- * Structured ask overlay — Qi unified bottom-center style.
+ * Structured ask overlay — fullscreen sheet covering the input.
  * Shows option preview, optional notes (n), and multi-question progress.
  */
 
@@ -261,7 +261,6 @@ class QuestionOverlay implements Component {
 			lines.push(truncateToWidth(`${pad}  ${th.fg("muted", "notes:")} ${shown}${cursor}`, w));
 		}
 
-		lines.push("");
 		const hint = this.freeMode
 			? "Enter submit · Esc back"
 			: this.notesMode
@@ -269,22 +268,26 @@ class QuestionOverlay implements Component {
 				: this.question.multiSelect
 					? "↑↓ · Space toggle · Enter submit · n notes · c collapse · Esc cancel"
 					: "↑↓ · Enter select · n notes · c collapse · Esc cancel";
-		lines.push(truncateToWidth(pad + th.fg("dim", hint), w));
+		const footer = ["", truncateToWidth(pad + th.fg("dim", hint), w)];
 
 		const maxRows = panelMaxHeight(tuiRows(this.tui), "sheet");
-		let view = lines;
-		if (lines.length > maxRows) {
+		const used = lines.length + footer.length;
+		const padRows = Math.max(0, maxRows - used);
+		const natural = [...lines, ...Array.from({ length: padRows }, () => ""), ...footer];
+
+		let view = natural;
+		if (natural.length > maxRows) {
 			// Keep header + hint frame; scroll options region by focusing near optionIndex.
 			const head = 3;
 			const tail = 2;
-			const body = lines.slice(head, Math.max(head, lines.length - tail));
+			const body = natural.slice(head, Math.max(head, natural.length - tail));
 			const focusApprox = Math.min(body.length - 1, Math.max(0, this.optionIndex + 1));
 			const bodyBudget = Math.max(1, maxRows - head - tail);
 			const start = Math.max(0, Math.min(focusApprox - Math.floor(bodyBudget / 2), body.length - bodyBudget));
 			view = [
-				...lines.slice(0, head),
+				...natural.slice(0, head),
 				...body.slice(start, start + bodyBudget),
-				...lines.slice(lines.length - tail),
+				...natural.slice(natural.length - tail),
 			];
 		}
 

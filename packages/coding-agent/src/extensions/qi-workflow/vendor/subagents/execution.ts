@@ -20,7 +20,7 @@ import {
 	type SingleResult,
 	type SubagentDetails,
 } from "./runner.ts";
-import { formatModelRef, pickSubagentModel } from "./pick-model.ts";
+import { formatModelRef, pickSubagentModelsForPresets } from "./pick-model.ts";
 import { readSubagentSettings, resolveSubagentThinkingLevel } from "./settings.ts";
 import { removeForegroundRun, upsertForegroundRun } from "./agent-bridge.ts";
 
@@ -217,15 +217,21 @@ export async function executeSubagent(
 				}
 			}
 
-			// Same pool as /model: pick once per invocation (headless inherits session model).
-			const pickedModel = await pickSubagentModel(ctx);
-			if (!pickedModel) {
+			// Same pool as /model: pick once per unique agent preset (headless inherits session model).
+			const agentNamesForPick: string[] = [];
+			if (params.chain) for (const step of params.chain) agentNamesForPick.push(step.agent);
+			if (params.tasks) for (const t of params.tasks) agentNamesForPick.push(t.agent);
+			if (params.aggregator) agentNamesForPick.push(params.aggregator.agent);
+			if (params.agent) agentNamesForPick.push(params.agent);
+			const pickedByPreset = await pickSubagentModelsForPresets(ctx, agentNamesForPick);
+			if (!pickedByPreset) {
 				return {
 					content: [{ type: "text", text: "Canceled: no subagent model selected." }],
 					details: makeDetails(hasChain ? "chain" : hasTasks ? "parallel" : "single")([]),
 				};
 			}
-			const selectedModel = formatModelRef(pickedModel);
+			const modelFor = (agent: string): string | undefined =>
+				formatModelRef(pickedByPreset.get(agent) ?? [...pickedByPreset.values()][0]);
 
 			if (params.chain && params.chain.length > 0) {
 				const results: SingleResult[] = [];
@@ -273,7 +279,7 @@ export async function executeSubagent(
 							chainUpdate,
 							makeDetails("chain"),
 							undefined,
-							selectedModel,
+							modelFor(step.agent),
 						);
 						results.push(result);
 
@@ -401,7 +407,7 @@ export async function executeSubagent(
 							},
 							makeDetails("parallel"),
 							undefined,
-							selectedModel,
+							modelFor(t.agent),
 						);
 						allResults[index] = result;
 						doneCount += 1;
@@ -456,7 +462,7 @@ export async function executeSubagent(
 							},
 							makeDetails("parallel"),
 							undefined,
-							selectedModel,
+							modelFor(aggregator.agent),
 						);
 					}
 
@@ -517,7 +523,7 @@ export async function executeSubagent(
 						onUpdate,
 						makeDetails("single"),
 						undefined,
-						selectedModel,
+						modelFor(params.agent),
 					);
 					const isError = isResultError(result);
 					if (isError) {

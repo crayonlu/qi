@@ -323,7 +323,9 @@ export function registerStatefulSubagents(
 			if (params.workspaceMode === "worktree" && resolvedAgent?.source === "project") {
 				throw new Error("Project-local subagent definitions cannot run in a detached worktree");
 			}
-			const pickedModel = await pickSubagentModel(ctx);
+			const pickedModel = await pickSubagentModel(ctx, {
+				title: `Subagent model · ${params.agent}`,
+			});
 			if (!pickedModel) {
 				return {
 					content: [{ type: "text", text: "Canceled: no subagent model selected." }],

@@ -69,6 +69,11 @@ export interface BoxPanelOptions {
 	 * an ellipsis row so the bottom ╰─╯ is never clipped by TUI maxHeight.
 	 */
 	maxHeight?: number;
+	/**
+	 * When set with maxHeight, pad empty body rows so the panel paints the full
+	 * height (fullscreen sheets — no see-through void).
+	 */
+	fillHeight?: boolean;
 }
 
 export interface SplitBoxPanelOptions {
@@ -118,7 +123,10 @@ export function renderBoxPanel(theme: Theme, opts: BoxPanelOptions): string[] {
 		1 /* bottom */ +
 		(footer.length > 0 ? 3 /* empty+div+empty */ + footer.length : 0);
 	const maxBody = opts.maxHeight !== undefined ? Math.max(1, opts.maxHeight - chrome) : Number.POSITIVE_INFINITY;
-	const body = clampBody(opts.body, maxBody);
+	let body = clampBody(opts.body, maxBody);
+	if (opts.fillHeight && opts.maxHeight !== undefined && Number.isFinite(maxBody)) {
+		while (body.length < maxBody) body = [...body, ""];
+	}
 
 	const titleText = ` ${opts.title.trim()} `;
 	const borderLen = Math.max(0, innerW - visibleWidth(titleText));
@@ -133,7 +141,7 @@ export function renderBoxPanel(theme: Theme, opts: BoxPanelOptions): string[] {
 		lines.push(emptyRow());
 	} else {
 		for (const line of body) {
-			lines.push(row(line));
+			lines.push(line === "" ? emptyRow() : row(line));
 		}
 	}
 

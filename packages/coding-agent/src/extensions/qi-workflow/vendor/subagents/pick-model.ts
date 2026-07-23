@@ -16,7 +16,10 @@ function modelLabel(model: Model<Api>): string {
  * (the same pool /model shows). Headless inherits the parent session model.
  * Returns undefined if the user cancels the picker.
  */
-export async function pickSubagentModel(ctx: ExtensionContext): Promise<Model<Api> | undefined> {
+export async function pickSubagentModel(
+	ctx: ExtensionContext,
+	opts?: { title?: string },
+): Promise<Model<Api> | undefined> {
 	const available = ctx.modelRegistry.getAvailable();
 	const fallback = ctx.model ?? available[0];
 	if (!ctx.hasUI) {
@@ -45,11 +48,37 @@ export async function pickSubagentModel(ctx: ExtensionContext): Promise<Model<Ap
 		}
 	}
 
-	const selected = await ctx.ui.select("Subagent model", options);
+	const title = opts?.title?.trim() || "Subagent model";
+	const selected = await ctx.ui.select(title, options);
 	if (!selected) return undefined;
 
 	const cleaned = selected.replace(/ \(current session\)$/, "");
 	return available.find((model) => modelLabel(model) === cleaned) ?? fallback;
+}
+
+/**
+ * Pick once per unique agent preset name. Same preset across chain/parallel/
+ * aggregator shares one selection; different presets each get their own pick.
+ * Returns undefined if the user cancels any picker.
+ */
+export async function pickSubagentModelsForPresets(
+	ctx: ExtensionContext,
+	agentNames: Iterable<string>,
+): Promise<Map<string, Model<Api>> | undefined> {
+	const unique = [...new Set([...agentNames].map((n) => n.trim()).filter(Boolean))];
+	const map = new Map<string, Model<Api>>();
+	if (unique.length === 0) {
+		const picked = await pickSubagentModel(ctx);
+		if (!picked) return undefined;
+		return map;
+	}
+	for (const name of unique) {
+		const title = unique.length === 1 ? `Subagent model · ${name}` : `Model for agent · ${name}`;
+		const picked = await pickSubagentModel(ctx, { title });
+		if (!picked) return undefined;
+		map.set(name, picked);
+	}
+	return map;
 }
 
 export function formatModelRef(model: Model<Api> | undefined): string | undefined {

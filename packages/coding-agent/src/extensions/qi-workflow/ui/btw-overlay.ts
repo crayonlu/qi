@@ -109,15 +109,6 @@ class BtwOverlay implements Component {
 		return SIDE_PAD + this.theme.fg("muted", truncateToWidth(raw, qAvail, "…", false));
 	}
 
-	private echoLine(question: string, width: number): string {
-		const bodyAvail = Math.max(1, width - SIDE_PAD.length);
-		const prefixW = BTW_LITERAL.length + 1;
-		const qAvail = Math.max(0, bodyAvail - prefixW);
-		const qClean = question.replace(/\s+/g, " ").trim();
-		const qTrunc = truncateToWidth(qClean, qAvail, "…", false);
-		return `${SIDE_PAD}${this.theme.fg("accent", BTW_LITERAL)} ${this.theme.fg("muted", qTrunc)}`;
-	}
-
 	private renderMarkdownAnswer(text: string, width: number): string[] {
 		const bodyWidth = Math.max(1, width - ANSWER_PAD.length);
 		const md = new Markdown(text, 0, 0, getMarkdownTheme());
@@ -140,44 +131,49 @@ class BtwOverlay implements Component {
 		const th = this.theme;
 		const w = Math.max(1, width);
 		const btw = this.draft();
-		const natural: string[] = [];
+		const maxRows = panelMaxHeight(tuiRows(this.tui), "sheet");
+
+		const header: string[] = [];
+		const body: string[] = [];
+		const footer: string[] = [];
 
 		if (!btw) {
-			natural.push(renderBanner(th, BTW_LITERAL, "(idle)", w));
-			natural.push("");
-			natural.push(SIDE_PAD + th.fg("dim", "No active /btw draft"));
-			natural.push("");
-			natural.push(hintLine(th, ["Esc close"], w));
+			header.push(renderBanner(th, BTW_LITERAL, "(idle)", w), "");
+			body.push(SIDE_PAD + th.fg("dim", "No active /btw draft"));
+			footer.push("", hintLine(th, ["Esc close"], w));
 		} else {
-			natural.push(renderBanner(th, BTW_LITERAL, btw.question, w));
-			natural.push("");
+			// Banner holds the question once — do not also echo `/btw …` (was the dup).
+			header.push(renderBanner(th, BTW_LITERAL, btw.question, w), "");
 
-			// Prior /btw questions only (rpiv layout) — never re-echo current Q/A.
-			const priorQs = btw.history.filter((t) => t.role === "user").map((t) => t.text);
+			const priorQs = btw.history
+				.filter((t) => t.role === "user")
+				.map((t) => t.text)
+				.filter((q) => q.trim() !== btw.question.trim());
 			for (const q of priorQs) {
-				natural.push(this.historyLine(q, w));
+				header.push(this.historyLine(q, w));
 			}
-			natural.push(this.echoLine(btw.question, w));
-			natural.push("");
+			if (priorQs.length > 0) header.push("");
 
 			if (btw.answer) {
-				natural.push(...this.renderMarkdownAnswer(btw.answer, w));
+				body.push(...this.renderMarkdownAnswer(btw.answer, w));
 			} else if (btw.error) {
-				natural.push(...this.renderPlainAnswer(btw.error, w, "error"));
+				body.push(...this.renderPlainAnswer(btw.error, w, "error"));
 			} else {
-				natural.push(ANSWER_PAD + th.fg("warning", "…"));
+				body.push(ANSWER_PAD + th.fg("warning", "…"));
 			}
 
-			natural.push("");
 			const hints: string[] = [];
 			if (btw.answer || btw.error) hints.push("↑↓ scroll");
 			if (priorQs.length > 0) hints.push("x clear");
 			if (btw.answer) hints.push("a attach");
 			hints.push(btw.answer || btw.error ? "Esc close" : "Esc abort");
-			natural.push(hintLine(th, hints, w));
+			footer.push("", hintLine(th, hints, w));
 		}
 
-		const maxRows = panelMaxHeight(tuiRows(this.tui), "sheet");
+		const used = header.length + body.length + footer.length;
+		const pad = Math.max(0, maxRows - used);
+		const natural = [...header, ...body, ...Array.from({ length: pad }, () => ""), ...footer];
+
 		let view = natural;
 		if (natural.length > maxRows) {
 			const excess = natural.length - maxRows;

@@ -20,17 +20,20 @@ function fakeTheme(): Theme {
 }
 
 describe("qi panel surface architecture", () => {
-	it("sheet and modal both reserve input chrome rows", () => {
-		expect(BOTTOM_OVERLAY.margin).toEqual({ left: 0, right: 0, bottom: INPUT_CHROME_ROWS });
+	it("sheet is fullscreen covering input; modal reserves input chrome", () => {
+		expect(BOTTOM_OVERLAY.anchor).toBe("top-center");
+		expect(BOTTOM_OVERLAY.maxHeight).toBe("100%");
+		expect(BOTTOM_OVERLAY.margin).toBe(0);
 		expect(CENTER_OVERLAY.margin).toMatchObject({ bottom: INPUT_CHROME_ROWS });
-		expect(panelOverlay("sheet").anchor).toBe("bottom-center");
+		expect(panelOverlay("sheet").anchor).toBe("top-center");
 		expect(panelOverlay("modal").anchor).toBe("center");
 	});
 
-	it("panelMaxHeight never exceeds terminal minus chrome", () => {
+	it("panelMaxHeight: sheet fills terminal; modal stays under chrome", () => {
+		expect(panelMaxHeight(24, "sheet")).toBe(24);
 		const h = panelMaxHeight(24, "modal");
 		expect(h).toBeLessThanOrEqual(24 - INPUT_CHROME_ROWS - 1);
-		expect(panelMaxHeight(24, "sheet")).toBeLessThanOrEqual(Math.floor(24 * 0.5));
+		expect(h).toBeLessThanOrEqual(Math.floor(24 * 0.7));
 	});
 
 	it("fitCell pads by visible columns, not string length", () => {
@@ -69,6 +72,20 @@ describe("qi panel surface architecture", () => {
 		expect(lines.length).toBeLessThanOrEqual(12);
 		expect(lines[lines.length - 1]).toContain("╰");
 		expect(lines.some((l) => l.includes("…"))).toBe(true);
+	});
+
+	it("renderBoxPanel fillHeight pads empty body to maxHeight", () => {
+		const th = fakeTheme();
+		const lines = renderBoxPanel(th, {
+			title: "MCP",
+			width: 40,
+			body: ["one"],
+			footer: ["esc"],
+			maxHeight: 16,
+			fillHeight: true,
+		});
+		expect(lines.length).toBe(16);
+		expect(lines[lines.length - 1]).toContain("╰");
 	});
 
 	it("renderSplitBoxPanel junctions stay aligned under ANSI cells", () => {

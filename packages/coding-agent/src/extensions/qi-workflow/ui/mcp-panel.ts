@@ -285,6 +285,7 @@ class McpPanel implements Component {
 			body,
 			footer,
 			maxHeight: panelMaxHeight(tuiRows(this.tui), "sheet"),
+			fillHeight: true,
 		});
 		this.cachedWidth = width;
 		this.cachedLines = lines;
