@@ -1069,10 +1069,21 @@ export class TUI extends Container {
 		// Excludes maxLinesRendered: the historical high-water mark caused self-reinforcing
 		// inflation that pushed content into scrollback on terminal widen.
 		const workingHeight = Math.max(result.length, termHeight, minLinesNeeded);
+		const padCount = workingHeight - result.length;
 
-		// Extend result with empty lines if content is too short for overlay placement or working area
-		while (result.length < workingHeight) {
-			result.push("");
+		// Bottom-anchored overlays should sit next to the editor. When content is shorter
+		// than the terminal (empty session), pad *above* so the editor stays at the bottom
+		// of the viewport instead of floating at the top with a huge gap under the panel.
+		const hasBottomAnchor = visibleEntries.some((entry) => {
+			const anchor = entry.options?.anchor;
+			return anchor === "bottom-left" || anchor === "bottom-center" || anchor === "bottom-right";
+		});
+		if (padCount > 0) {
+			if (hasBottomAnchor) {
+				result.unshift(...Array.from({ length: padCount }, () => ""));
+			} else {
+				for (let i = 0; i < padCount; i++) result.push("");
+			}
 		}
 
 		const viewportStart = Math.max(0, workingHeight - termHeight);

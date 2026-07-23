@@ -178,7 +178,7 @@ class BtwOverlay implements Component {
 		}
 
 		const rows = (this.tui as TUI & { terminal?: { rows?: number } }).terminal?.rows ?? 24;
-		const maxRows = Math.max(4, Math.floor(rows * 0.85));
+		const maxRows = Math.max(4, Math.floor(rows * 0.5));
 		let view = natural;
 		if (natural.length > maxRows) {
 			const excess = natural.length - maxRows;

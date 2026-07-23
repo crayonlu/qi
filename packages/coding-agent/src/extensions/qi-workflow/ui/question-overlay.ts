@@ -301,7 +301,7 @@ class QuestionOverlay implements Component {
 }
 
 /**
- * Show structured question overlay (bottom-center, full width, maxHeight 80%).
+ * Show structured question overlay (bottom-center, full width, maxHeight 50%).
  */
 export async function showQuestionOverlay(
 	ctx: { ui: ExtensionUIContext },
