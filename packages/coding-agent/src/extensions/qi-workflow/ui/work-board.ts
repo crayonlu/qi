@@ -10,9 +10,10 @@ import type { ExtensionUIContext } from "../../../core/extensions/types.ts";
 import type { Theme } from "../../../modes/interactive/theme/theme.ts";
 import type { WorkflowController } from "../controller.ts";
 import type { JobEntity, QiWorkflowState, TaskEntity, TodoItem } from "../domain/index.ts";
+import { countActiveAgents } from "../vendor/subagents/agent-bridge.ts";
 import { CHROME } from "./chrome.ts";
 import { colorStatus } from "./status-color.ts";
-import { goalIcon, ICONS, planIcon, todoStatusGlyph } from "./status-icons.ts";
+import { goalIcon, ICON_GAP, ICONS, planIcon, todoStatusGlyph, withIcon } from "./status-icons.ts";
 
 export const QI_BOARD_WIDGET_KEY = "qi-board";
 
@@ -45,6 +46,7 @@ export function hasActiveWork(state: QiWorkflowState): boolean {
 	if (state.tasks.some(isActiveTask)) return true;
 	if (state.jobs.some(isActiveJob)) return true;
 	if (isVisiblePlan(state)) return true;
+	if (countActiveAgents() > 0) return true;
 	return false;
 }
 
@@ -89,21 +91,27 @@ export function buildBoardLines(state: QiWorkflowState, theme: Theme, collapsed:
 	if (collapsed) {
 		const bits: string[] = [];
 		if (state.goal && isActiveGoal(state)) {
-			bits.push(colorStatus(theme, state.goal.status, `${goalIcon(state.goal.status)}goal:${state.goal.status}`));
+			bits.push(
+				colorStatus(theme, state.goal.status, withIcon(goalIcon(state.goal.status), `goal:${state.goal.status}`)),
+			);
 		}
 		if (planVisible && plan) {
-			bits.push(theme.fg("muted", `${planIcon(plan.status)}plan:${plan.status}`));
+			bits.push(theme.fg("muted", withIcon(planIcon(plan.status), `plan:${plan.status}`)));
 		}
 		if (unfinished.length > 0) {
 			const blocked = unfinished.filter((t) => t.status === "blocked").length;
 			const icon = blocked > 0 ? ICONS.todoBlocked : ICONS.todos;
-			bits.push(theme.fg(blocked > 0 ? "error" : "muted", `${icon}todos=${unfinished.length}`));
+			bits.push(theme.fg(blocked > 0 ? "error" : "muted", withIcon(icon, `todos=${unfinished.length}`)));
+		}
+		const agents = countActiveAgents();
+		if (agents > 0) {
+			bits.push(theme.fg("accent", withIcon(ICONS.active, `agents=${agents}`)));
 		}
 		if (activeTasks.length > 0) {
-			bits.push(theme.fg("accent", `${ICONS.tasks}tasks=${activeTasks.length}`));
+			bits.push(theme.fg("accent", withIcon(ICONS.tasks, `tasks=${activeTasks.length}`)));
 		}
 		if (activeJobs.length > 0) {
-			bits.push(theme.fg("accent", `${ICONS.jobs}jobs=${activeJobs.length}`));
+			bits.push(theme.fg("accent", withIcon(ICONS.jobs, `jobs=${activeJobs.length}`)));
 		}
 		const summary = bits.length > 0 ? bits.join(" ") : theme.fg("dim", "qi");
 		return [theme.fg("dim", "▸ ") + summary + theme.fg("dim", "  [/board expand]")];
@@ -112,18 +120,18 @@ export function buildBoardLines(state: QiWorkflowState, theme: Theme, collapsed:
 	const lines: string[] = [];
 
 	if (state.goal && isActiveGoal(state)) {
-		const label = colorStatus(theme, state.goal.status, `${goalIcon(state.goal.status)}goal`);
+		const label = colorStatus(theme, state.goal.status, withIcon(goalIcon(state.goal.status), "goal"));
 		const obj = theme.fg("text", state.goal.objective);
 		lines.push(`${label} ${obj}${goalUsageBits(state, theme)}`);
 		if (state.goal.blockReason) {
-			lines.push(theme.fg("error", `  ${ICONS.fail} ${state.goal.blockReason}`));
+			lines.push(theme.fg("error", `  ${withIcon(ICONS.fail, state.goal.blockReason)}`));
 		}
 	}
 
 	if (planVisible && plan) {
 		const planColor = plan.status === "ready" ? "success" : plan.status === "executing" ? "accent" : "muted";
 		lines.push(
-			`${theme.fg(planColor, `${planIcon(plan.status)}plan:${plan.status}`)} ${theme.fg("text", plan.goal)}` +
+			`${theme.fg(planColor, withIcon(planIcon(plan.status), `plan:${plan.status}`))} ${theme.fg("text", plan.goal)}` +
 				theme.fg("dim", "  [/plan execute · /plan ready]"),
 		);
 	}
@@ -132,9 +140,9 @@ export function buildBoardLines(state: QiWorkflowState, theme: Theme, collapsed:
 		const headingDone = state.todos.filter((t) => t.status === "completed").length;
 		const headingTotal = headingDone + unfinished.length;
 		const headingIcon = unfinished.some((t) => t.status === "in_progress")
-			? theme.fg("warning", "●")
-			: theme.fg("dim", "○");
-		lines.push(`${headingIcon} ${theme.fg("muted", `Todos (${headingDone}/${headingTotal})`)}`);
+			? theme.fg("warning", ICONS.solid)
+			: theme.fg("dim", ICONS.idle);
+		lines.push(`${headingIcon}${ICON_GAP}${theme.fg("muted", `Todos (${headingDone}/${headingTotal})`)}`);
 		const visible = unfinished.slice(0, 12);
 		for (let i = 0; i < visible.length; i++) {
 			const t = visible[i]!;
@@ -146,16 +154,25 @@ export function buildBoardLines(state: QiWorkflowState, theme: Theme, collapsed:
 		}
 	}
 
+	const agents = countActiveAgents();
+	if (agents > 0) {
+		lines.push(
+			`${theme.fg("accent", withIcon(ICONS.active, "agents"))} ${theme.fg("text", `${agents} active`)}${theme.fg("dim", "  [/agents]")}`,
+		);
+	}
+
 	if (activeTasks.length > 0) {
 		const task = activeTasks[0]!;
 		const more = activeTasks.length > 1 ? theme.fg("dim", ` +${activeTasks.length - 1}`) : "";
-		lines.push(`${colorStatus(theme, task.status, `${ICONS.tasks}task`)} ${theme.fg("text", task.goal)}${more}`);
+		lines.push(
+			`${colorStatus(theme, task.status, withIcon(ICONS.tasks, "task"))} ${theme.fg("text", task.goal)}${more}`,
+		);
 	}
 
 	if (activeJobs.length > 0) {
 		const job = activeJobs[0]!;
 		const more = activeJobs.length > 1 ? theme.fg("dim", ` +${activeJobs.length - 1}`) : "";
-		lines.push(`${colorStatus(theme, job.status, `${ICONS.jobs}job`)} ${theme.fg("text", job.name)}${more}`);
+		lines.push(`${colorStatus(theme, job.status, withIcon(ICONS.jobs, "job"))} ${theme.fg("text", job.name)}${more}`);
 	}
 
 	if (lines.length > 0) lines.push(""); // trailing spacer (rpiv-todo) so board isn't flush on the editor

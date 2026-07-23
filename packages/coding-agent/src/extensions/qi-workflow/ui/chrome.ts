@@ -70,14 +70,14 @@ export function renderBoxPanel(theme: Theme, opts: BoxPanelOptions): string[] {
 	};
 
 	const emptyRow = (): string => border("│") + " ".repeat(innerW) + border("│");
-	const divider = (): string => border("├" + "─".repeat(innerW) + "┤");
+	const divider = (): string => border(`├${"─".repeat(innerW)}┤`);
 
 	const titleText = ` ${opts.title.trim()} `;
 	const borderLen = Math.max(0, innerW - visibleWidth(titleText));
 	const leftB = Math.floor(borderLen / 2);
 	const rightB = borderLen - leftB;
 	const lines: string[] = [
-		border("╭" + "─".repeat(leftB)) + titleFg(titleText) + border("─".repeat(rightB) + "╮"),
+		border(`╭${"─".repeat(leftB)}`) + titleFg(titleText) + border(`${"─".repeat(rightB)}╮`),
 		emptyRow(),
 	];
 
@@ -98,7 +98,7 @@ export function renderBoxPanel(theme: Theme, opts: BoxPanelOptions): string[] {
 		}
 	}
 
-	lines.push(border("╰" + "─".repeat(innerW) + "╯"));
+	lines.push(border(`╰${"─".repeat(innerW)}╯`));
 	return lines;
 }
 

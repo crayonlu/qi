@@ -38,6 +38,7 @@ import {
 	undoLastRewind,
 } from "../runtime/index.ts";
 import {
+	openAgentView,
 	openDashboard,
 	showBtwOverlay,
 	showCleanupPanel,
@@ -452,6 +453,15 @@ export function registerQiWorkflowCommands(pi: ExtensionAPI): void {
 		handler: async (_args, ctx) => {
 			if (!requireUi(ctx, "tasks")) return;
 			await openDashboard(ctx, workflowController, "task");
+		},
+	});
+
+	pi.registerCommand("agents", {
+		description: "Open Agent View — live/detached subagents (Claude-style roster)",
+		category: "work",
+		handler: async (_args, ctx) => {
+			if (!requireUi(ctx, "agents")) return;
+			await openAgentView(ctx);
 		},
 	});
 

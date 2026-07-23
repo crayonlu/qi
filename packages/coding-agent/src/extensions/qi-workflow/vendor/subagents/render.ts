@@ -17,8 +17,33 @@ import {
 	type SingleResult,
 	type SubagentDetails,
 } from "./runner.ts";
+import { ICONS, spinFrame, withIcon } from "../../ui/status-icons.ts";
 
 const COLLAPSED_ITEM_COUNT = 10;
+const TREE_BRANCH = ICONS.treeBranch;
+const TREE_LAST = ICONS.treeLast;
+
+function resultIcon(theme: Theme, opts: { error?: boolean; running?: boolean; tick?: number }): string {
+	if (opts.error) return theme.fg("error", ICONS.fail);
+	if (opts.running) return theme.fg("warning", spinFrame(opts.tick ?? 0));
+	return theme.fg("success", ICONS.done);
+}
+
+function treePrefix(isLast: boolean, theme: Theme): string {
+	return theme.fg("dim", isLast ? `${TREE_LAST} ` : `${TREE_BRANCH} `);
+}
+
+function formatDoneStats(
+	theme: Theme,
+	opts: { tools?: number; usage?: string; partial?: boolean },
+): string {
+	const parts: string[] = [];
+	if (opts.tools && opts.tools > 0) parts.push(`${opts.tools} tools`);
+	if (opts.usage) parts.push(opts.usage);
+	if (parts.length === 0) return "";
+	const label = opts.partial ? "Running" : "Done";
+	return theme.fg("dim", `${label} (${parts.join(" · ")})`);
+}
 
 export function formatTokens(count: number): string {
 	if (count < 1000) return count.toString();
@@ -182,18 +207,17 @@ export function renderSubagentCall(args: SubagentParams, theme: Theme) {
 			theme.fg("muted", ` [${scope}]`);
 		for (let i = 0; i < Math.min(args.chain.length, 3); i++) {
 			const step = args.chain[i];
-			// Clean up {previous} placeholder for display
 			const cleanTask = step.task.replace(/\{previous\}/g, "").trim();
 			const preview = cleanTask.length > 40 ? `${cleanTask.slice(0, 40)}...` : cleanTask;
+			const last = i === Math.min(args.chain.length, 3) - 1 && args.chain.length <= 3;
 			text +=
-				"\n  " +
-				theme.fg("muted", `${i + 1}.`) +
-				" " +
+				"\n" +
+				treePrefix(last, theme) +
 				theme.fg("accent", step.agent) +
 				theme.fg("dim", ` ${preview}`);
 		}
 		if (args.chain.length > 3)
-			text += `\n  ${theme.fg("muted", `... +${args.chain.length - 3} more`)}`;
+			text += `\n${treePrefix(true, theme)}${theme.fg("muted", `+${args.chain.length - 3} more`)}`;
 		return new Text(text, 0, 0);
 	}
 	if (args.tasks && args.tasks.length > 0) {
@@ -201,18 +225,21 @@ export function renderSubagentCall(args: SubagentParams, theme: Theme) {
 			theme.fg("toolTitle", theme.bold("subagent ")) +
 			theme.fg("accent", `parallel (${args.tasks.length} tasks)`) +
 			theme.fg("muted", ` [${scope}]`);
-		for (const t of args.tasks.slice(0, 3)) {
+		const show = args.tasks.slice(0, 3);
+		for (let i = 0; i < show.length; i++) {
+			const t = show[i];
 			const preview = t.task.length > 40 ? `${t.task.slice(0, 40)}...` : t.task;
-			text += `\n  ${theme.fg("accent", t.agent)}${theme.fg("dim", ` ${preview}`)}`;
+			const last = i === show.length - 1 && args.tasks.length <= 3 && !args.aggregator;
+			text += `\n${treePrefix(last, theme)}${theme.fg("accent", t.agent)}${theme.fg("dim", ` ${preview}`)}`;
 		}
 		if (args.tasks.length > 3)
-			text += `\n  ${theme.fg("muted", `... +${args.tasks.length - 3} more`)}`;
+			text += `\n${treePrefix(!args.aggregator, theme)}${theme.fg("muted", `+${args.tasks.length - 3} more`)}`;
 		if (args.aggregator) {
 			const preview =
 				args.aggregator.task.length > 40
 					? `${args.aggregator.task.slice(0, 40)}...`
 					: args.aggregator.task;
-			text += `\n  ${theme.fg("muted", "fan-in → ")}${theme.fg("accent", args.aggregator.agent)}${theme.fg(
+			text += `\n${treePrefix(true, theme)}${theme.fg("muted", "fan-in → ")}${theme.fg("accent", args.aggregator.agent)}${theme.fg(
 				"dim",
 				` ${preview}`,
 			)}`;
@@ -229,7 +256,7 @@ export function renderSubagentCall(args: SubagentParams, theme: Theme) {
 		theme.fg("toolTitle", theme.bold("subagent ")) +
 		theme.fg("accent", agentName) +
 		theme.fg("muted", ` [${scope}]`);
-	text += `\n  ${theme.fg("dim", preview)}`;
+	text += `\n${treePrefix(true, theme)}${theme.fg("dim", preview)}`;
 	return new Text(text, 0, 0);
 }
 
@@ -241,7 +268,15 @@ export function renderSubagentResult(
 	const details = result.details as SubagentDetails | undefined;
 	if (!details || details.results.length === 0) {
 		const text = result.content[0];
-		return new Text(text?.type === "text" ? text.text : "(no output)", 0, 0);
+		const body = text?.type === "text" ? text.text : "(no output)";
+		if (isPartial) {
+			return new Text(
+				withIcon(theme.fg("warning", spinFrame(0)), theme.fg("muted", body || "Working…")),
+				0,
+				0,
+			);
+		}
+		return new Text(body, 0, 0);
 	}
 
 	const mdTheme = getMarkdownTheme();
@@ -251,12 +286,15 @@ export function renderSubagentResult(
 		const skipped = Math.max(0, total - toShow.length);
 		let text = "";
 		if (skipped > 0) text += theme.fg("muted", `... ${skipped} earlier items\n`);
-		for (const item of toShow) {
+		for (let i = 0; i < toShow.length; i++) {
+			const item = toShow[i]!;
+			const last = i === toShow.length - 1;
+			const prefix = treePrefix(last, theme);
 			if (item.type === "text") {
 				const preview = expanded ? item.text : item.text.split("\n").slice(0, 3).join("\n");
-				text += `${theme.fg("toolOutput", preview)}\n`;
+				text += `${prefix}${theme.fg("toolOutput", preview)}\n`;
 			} else {
-				text += `${theme.fg("muted", "→ ") + formatToolCall(item.name, item.args, theme.fg.bind(theme))}\n`;
+				text += `${prefix}${formatToolCall(item.name, item.args, theme.fg.bind(theme))}\n`;
 			}
 		}
 		return text.trimEnd();
@@ -265,17 +303,14 @@ export function renderSubagentResult(
 	if (details.mode === "single" && details.results.length === 1) {
 		const r = details.results[0];
 		const isError = isResultError(r);
-		const icon = isError
-			? theme.fg("error", "✗")
-			: isPartial
-				? theme.fg("warning", "⏳")
-				: theme.fg("success", "✓");
+		const icon = resultIcon(theme, { error: isError, running: isPartial && !isError });
 		const displayItems = getDisplayItems(r.messages);
+		const toolCount = displayItems.filter((i) => i.type === "toolCall").length;
 		const finalOutput = getResultFinalOutput(r);
 
 		if (expanded) {
 			const container = new Container();
-			let header = `${icon} ${theme.fg("toolTitle", theme.bold(r.agent))}${theme.fg("muted", ` (${r.agentSource})`)}`;
+			let header = withIcon(icon, theme.fg("toolTitle", theme.bold(r.agent)) + theme.fg("muted", ` (${r.agentSource})`));
 			if (isError && r.stopReason) header += ` ${theme.fg("error", `[${r.stopReason}]`)}`;
 			container.addChild(new Text(header, 0, 0));
 			if (isError && r.errorMessage)
@@ -288,11 +323,12 @@ export function renderSubagentResult(
 			if (displayItems.length === 0 && !finalOutput) {
 				container.addChild(new Text(theme.fg("muted", "(no output)"), 0, 0));
 			} else {
-				for (const item of displayItems) {
+				for (let i = 0; i < displayItems.length; i++) {
+					const item = displayItems[i]!;
 					if (item.type === "toolCall")
 						container.addChild(
 							new Text(
-								theme.fg("muted", "→ ") +
+								treePrefix(i === displayItems.length - 1 && !finalOutput, theme) +
 									formatToolCall(item.name, item.args, theme.fg.bind(theme)),
 								0,
 								0,
@@ -305,15 +341,19 @@ export function renderSubagentResult(
 				}
 			}
 			const usageStr = formatResultUsageStats(r);
-			if (usageStr) {
+			const stats = formatDoneStats(theme, { tools: toolCount, usage: usageStr, partial: isPartial });
+			if (stats) {
 				container.addChild(new Spacer(1));
-				container.addChild(new Text(theme.fg("dim", usageStr), 0, 0));
+				container.addChild(new Text(stats, 0, 0));
 			}
 			return container;
 		}
 
 		const collapsed = getCollapsedDisplayItems(r);
-		let text = `${icon} ${theme.fg("toolTitle", theme.bold(r.agent))}${theme.fg("muted", ` (${r.agentSource})`)}`;
+		let text = withIcon(
+			icon,
+			theme.fg("toolTitle", theme.bold(r.agent)) + theme.fg("muted", ` (${r.agentSource})`),
+		);
 		if (isError && r.stopReason) text += ` ${theme.fg("error", `[${r.stopReason}]`)}`;
 		if (isError && r.errorMessage) text += `\n${theme.fg("error", `Error: ${r.errorMessage}`)}`;
 		if (collapsed.items.length > 0) {
@@ -321,12 +361,13 @@ export function renderSubagentResult(
 			if (collapsed.total > COLLAPSED_ITEM_COUNT)
 				text += `\n${theme.fg("muted", "(Ctrl+O to expand)")}`;
 		} else if (finalOutput.trim()) {
-			text += `\n${theme.fg("toolOutput", finalOutput.trim().split("\n").slice(0, 3).join("\n"))}`;
+			text += `\n${treePrefix(true, theme)}${theme.fg("toolOutput", finalOutput.trim().split("\n").slice(0, 3).join("\n"))}`;
 		} else if (!isError || !r.errorMessage) {
 			text += `\n${theme.fg("muted", isPartial && !isError ? "(running...)" : "(no output)")}`;
 		}
 		const usageStr = formatResultUsageStats(r);
-		if (usageStr) text += `\n${theme.fg("dim", usageStr)}`;
+		const stats = formatDoneStats(theme, { tools: toolCount, usage: usageStr, partial: isPartial });
+		if (stats) text += `\n${stats}`;
 		return new Text(text, 0, 0);
 	}
 
@@ -351,10 +392,10 @@ export function renderSubagentResult(
 			(result) => !isResultError(result) && (!currentIsRunning || result !== currentResult),
 		).length;
 		const icon = currentIsRunning
-			? theme.fg("warning", "⏳")
+			? theme.fg("warning", spinFrame(0))
 			: successCount === details.results.length
-				? theme.fg("success", "✓")
-				: theme.fg("error", "✗");
+				? theme.fg("success", ICONS.done)
+				: theme.fg("error", ICONS.fail);
 
 		if (expanded) {
 			const container = new Container();
@@ -372,10 +413,10 @@ export function renderSubagentResult(
 			for (const r of details.results) {
 				const rFailed = isResultError(r);
 				const rIcon = rFailed
-					? theme.fg("error", "✗")
+					? theme.fg("error", ICONS.fail)
 					: currentIsRunning && r === currentResult
-						? theme.fg("warning", "⏳")
-						: theme.fg("success", "✓");
+						? theme.fg("warning", spinFrame(0))
+						: theme.fg("success", ICONS.done);
 				const displayItems = getDisplayItems(r.messages);
 				const finalOutput = getResultFinalOutput(r);
 
@@ -396,7 +437,7 @@ export function renderSubagentResult(
 					if (item.type === "toolCall") {
 						container.addChild(
 							new Text(
-								theme.fg("muted", "→ ") +
+								treePrefix(false, theme) +
 									formatToolCall(item.name, item.args, theme.fg.bind(theme)),
 								0,
 								0,
@@ -432,10 +473,10 @@ export function renderSubagentResult(
 		for (const r of details.results) {
 			const rFailed = isResultError(r);
 			const rIcon = rFailed
-				? theme.fg("error", "✗")
+				? theme.fg("error", ICONS.fail)
 				: currentIsRunning && r === currentResult
-					? theme.fg("warning", "⏳")
-					: theme.fg("success", "✓");
+					? theme.fg("warning", spinFrame(0))
+					: theme.fg("success", ICONS.done);
 			const collapsed = getCollapsedDisplayItems(r);
 			const finalOutput = getResultFinalOutput(r).trim();
 			text += `\n\n${theme.fg("muted", `─── Step ${r.step}: `)}${theme.fg("accent", r.agent)} ${rIcon}`;
@@ -472,10 +513,10 @@ export function renderSubagentResult(
 			isPartial && !aggregator && running === 0 && failCount === 0;
 		const isRunning = running > 0 || aggregatorRunning || pendingSuccessfulSettlement;
 		const icon = isRunning
-			? theme.fg("warning", "⏳")
+			? theme.fg("warning", spinFrame(0))
 			: failCount > 0 || aggregatorFailed
-				? theme.fg("warning", "◐")
-				: theme.fg("success", "✓");
+				? theme.fg("warning", ICONS.active)
+				: theme.fg("success", ICONS.done);
 		const status = isRunning
 			? aggregatorRunning
 				? `${successCount + failCount}/${details.results.length} done, fan-in running`
@@ -499,10 +540,10 @@ export function renderSubagentResult(
 			for (const r of details.results) {
 				const rFailed = isResultError(r);
 				const rIcon = rFailed
-					? theme.fg("error", "✗")
+					? theme.fg("error", ICONS.fail)
 					: resultIsRunning(r)
-						? theme.fg("warning", "⏳")
-						: theme.fg("success", "✓");
+						? theme.fg("warning", spinFrame(0))
+						: theme.fg("success", ICONS.done);
 				const displayItems = getDisplayItems(r.messages);
 				const finalOutput = getResultFinalOutput(r);
 
@@ -519,7 +560,7 @@ export function renderSubagentResult(
 					if (item.type === "toolCall") {
 						container.addChild(
 							new Text(
-								theme.fg("muted", "→ ") +
+								treePrefix(false, theme) +
 									formatToolCall(item.name, item.args, theme.fg.bind(theme)),
 								0,
 								0,
@@ -540,10 +581,10 @@ export function renderSubagentResult(
 
 			if (aggregator) {
 				const rIcon = aggregatorFailed
-					? theme.fg("error", "✗")
+					? theme.fg("error", ICONS.fail)
 					: aggregatorRunning
-						? theme.fg("warning", "⏳")
-						: theme.fg("success", "✓");
+						? theme.fg("warning", spinFrame(0))
+						: theme.fg("success", ICONS.done);
 				const displayItems = getDisplayItems(aggregator.messages);
 				const finalOutput = getResultFinalOutput(aggregator);
 
@@ -566,7 +607,7 @@ export function renderSubagentResult(
 					if (item.type === "toolCall") {
 						container.addChild(
 							new Text(
-								theme.fg("muted", "→ ") +
+								treePrefix(false, theme) +
 									formatToolCall(item.name, item.args, theme.fg.bind(theme)),
 								0,
 								0,
@@ -597,10 +638,10 @@ export function renderSubagentResult(
 			const rFailed = isResultError(r);
 			const rRunning = resultIsRunning(r);
 			const rIcon = rFailed
-				? theme.fg("error", "✗")
+				? theme.fg("error", ICONS.fail)
 				: rRunning
-					? theme.fg("warning", "⏳")
-					: theme.fg("success", "✓");
+					? theme.fg("warning", spinFrame(0))
+					: theme.fg("success", ICONS.done);
 			const collapsed = getCollapsedDisplayItems(r);
 			const finalOutput = getResultFinalOutput(r).trim();
 			text += `\n\n${theme.fg("muted", "─── ")}${theme.fg("accent", r.agent)} ${rIcon}`;
@@ -615,10 +656,10 @@ export function renderSubagentResult(
 		}
 		if (aggregator) {
 			const rIcon = aggregatorFailed
-				? theme.fg("error", "✗")
+				? theme.fg("error", ICONS.fail)
 				: aggregatorRunning
-					? theme.fg("warning", "⏳")
-					: theme.fg("success", "✓");
+					? theme.fg("warning", spinFrame(0))
+					: theme.fg("success", ICONS.done);
 			const collapsed = getCollapsedDisplayItems(aggregator);
 			const finalOutput = getResultFinalOutput(aggregator).trim();
 			text += `\n\n${theme.fg("muted", "─── fan-in → ")}${theme.fg("accent", aggregator.agent)} ${rIcon}`;

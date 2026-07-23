@@ -1,3 +1,4 @@
+export { openAgentView } from "./agent-view.ts";
 export { showBtwOverlay } from "./btw-overlay.ts";
 export { type CleanupPanelApi, showCleanupPanel } from "./cleanup-panel.ts";
 export { buildFooterText, QI_FOOTER_STATUS_KEY, refreshFooter } from "./footer.ts";

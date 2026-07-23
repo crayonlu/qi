@@ -1,13 +1,14 @@
 /**
- * Single Qi footer status key — goal/plan/todos/tasks/jobs/mcp/fail signals.
+ * Single Qi footer status key — goal/plan/todos/tasks/jobs/agents/mcp/fail signals.
  * Never drops signals: attention-critical parts are ordered first so host
  * width truncation (if any) keeps what users must see. Icons + optional
- * tick frames strengthen live/alert states.
+ * tick frames strengthen live/alert states. Always icon+gap+label (rpiv).
  */
 
 import type { ExtensionUIContext } from "../../../core/extensions/types.ts";
 import type { JobEntity, McpServerState, QiWorkflowState, TaskEntity } from "../domain/index.ts";
-import { alertFrame, goalIcon, ICONS, planIcon, spinFrame } from "./status-icons.ts";
+import { countActiveAgents } from "../vendor/subagents/agent-bridge.ts";
+import { alertFrame, goalIcon, ICONS, planIcon, spinFrame, withIcon } from "./status-icons.ts";
 
 export const QI_FOOTER_STATUS_KEY = "qi";
 
@@ -46,6 +47,7 @@ export function footerNeedsAnimation(state: QiWorkflowState): boolean {
 	if (state.todos.some((t) => t.status === "blocked" || t.status === "in_progress")) return true;
 	if (state.tasks.some((t) => t.status === "running")) return true;
 	if (state.jobs.some((j) => j.status === "running" || j.status === "terminating")) return true;
+	if (countActiveAgents() > 0) return true;
 	if (state.mcpServers.some(isConnectingMcp) || state.mcpServers.some(isErrorMcp)) return true;
 	if (
 		state.tasks.some(isFailedTask) ||
@@ -72,12 +74,12 @@ export function buildFooterText(state: QiWorkflowState, tick = 0): string | unde
 		state.tasks.filter(isFailedTask).length +
 		state.jobs.filter(isFailedJob).length +
 		state.workflows.filter((w) => w.status === "failed").length;
-	if (fail > 0) alert.push(`${pulse}${ICONS.fail}fail=${fail}`);
+	if (fail > 0) alert.push(withIcon(`${pulse}${ICONS.fail}`, `fail=${fail}`));
 
 	const goal = state.goal;
 	if (goal && (goal.status === "active" || goal.status === "paused" || goal.status === "blocked")) {
 		const icon = goal.status === "blocked" ? `${pulse}${goalIcon(goal.status)}` : goalIcon(goal.status);
-		let g = `${icon}goal:${goal.status}`;
+		let g = withIcon(icon, `goal:${goal.status}`);
 		if (goal.tokenBudget && goal.tokenBudget > 0) g += `(${goal.tokensUsed}/${goal.tokenBudget})`;
 		else if (goal.tokensUsed > 0) g += `(${goal.tokensUsed})`;
 		if (goal.status === "blocked") alert.push(g);
@@ -88,7 +90,8 @@ export function buildFooterText(state: QiWorkflowState, tick = 0): string | unde
 	const mcpConn = state.mcpServers.filter(isConnectingMcp).length;
 	const mcpErr = state.mcpServers.filter(isErrorMcp).length;
 	if (mcpOk > 0 || mcpConn > 0 || mcpErr > 0) {
-		let mcp = `${mcpErr > 0 ? `${pulse}${ICONS.mcpErr}` : mcpConn > 0 ? `${live}${ICONS.mcpConn}` : ICONS.mcpOk}mcp=${mcpOk}`;
+		const icon = mcpErr > 0 ? `${pulse}${ICONS.mcpErr}` : mcpConn > 0 ? `${live}${ICONS.mcpConn}` : ICONS.mcpOk;
+		let mcp = withIcon(icon, `mcp=${mcpOk}`);
 		if (mcpConn > 0) mcp += `~${mcpConn}`;
 		if (mcpErr > 0) mcp += `!${mcpErr}`;
 		if (mcpErr > 0) alert.push(mcp);
@@ -98,7 +101,7 @@ export function buildFooterText(state: QiWorkflowState, tick = 0): string | unde
 	const plan = state.plan;
 	if (plan && (plan.status === "draft" || plan.status === "ready" || plan.status === "executing")) {
 		const icon = plan.status === "executing" ? `${live}${planIcon(plan.status)}` : planIcon(plan.status);
-		rest.push(`${icon}plan:${plan.status}`);
+		rest.push(withIcon(icon, `plan:${plan.status}`));
 	}
 
 	const blockedTodos = state.todos.filter((t) => t.status === "blocked").length;
@@ -107,25 +110,31 @@ export function buildFooterText(state: QiWorkflowState, tick = 0): string | unde
 	).length;
 	if (todos > 0) {
 		const icon = blockedTodos > 0 ? `${pulse}${ICONS.todoBlocked}` : ICONS.todos;
-		const text = blockedTodos > 0 ? `${icon}todos=${todos}!${blockedTodos}` : `${icon}todos=${todos}`;
+		const text =
+			blockedTodos > 0 ? withIcon(icon, `todos=${todos}!${blockedTodos}`) : withIcon(icon, `todos=${todos}`);
 		if (blockedTodos > 0) alert.push(text);
 		else rest.push(text);
+	}
+
+	const agents = countActiveAgents();
+	if (agents > 0) {
+		rest.push(withIcon(`${live}${ICONS.active}`, `agents=${agents}`));
 	}
 
 	const tasks = state.tasks.filter(isActiveTask).length;
 	const runningTasks = state.tasks.filter((t) => t.status === "running").length;
 	if (tasks > 0) {
-		rest.push(`${runningTasks > 0 ? live : ""}${ICONS.tasks}tasks=${tasks}`);
+		rest.push(withIcon(runningTasks > 0 ? `${live}${ICONS.tasks}` : ICONS.tasks, `tasks=${tasks}`));
 	}
 
 	const jobs = state.jobs.filter(isActiveJob).length;
 	const liveJobs = state.jobs.filter((j) => j.status === "running" || j.status === "terminating").length;
 	if (jobs > 0) {
-		rest.push(`${liveJobs > 0 ? live : ""}${ICONS.jobs}jobs=${jobs}`);
+		rest.push(withIcon(liveJobs > 0 ? `${live}${ICONS.jobs}` : ICONS.jobs, `jobs=${jobs}`));
 	}
 
 	const checkpoints = state.rewindCheckpoints.length;
-	if (checkpoints > 0) rest.push(`${ICONS.rewind}rw=${checkpoints}`);
+	if (checkpoints > 0) rest.push(withIcon(ICONS.rewind, `rw=${checkpoints}`));
 
 	const parts = [...alert, ...rest];
 	if (parts.length === 0) return undefined;

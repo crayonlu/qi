@@ -40,6 +40,25 @@ export function startPlan(state: QiWorkflowState, goal: string): TransitionResul
 	return ok({ ...state, plan }, plan);
 }
 
+/** Infer a plan goal from active goal / todos when tools auto-create. */
+export function inferPlanGoal(state: QiWorkflowState, hint?: string): string {
+	const fromHint = hint?.trim();
+	if (fromHint) return fromHint;
+	const fromGoal = state.goal?.objective?.trim();
+	if (fromGoal) return fromGoal;
+	const activeTodo =
+		state.todos.find((t) => t.status === "in_progress") ?? state.todos.find((t) => t.status === "pending");
+	const fromTodo = activeTodo?.text?.trim();
+	if (fromTodo) return fromTodo;
+	return "Untitled plan";
+}
+
+/** Return the active plan, or start one (harness: tools should not fail with "No active plan"). */
+export function ensureActivePlan(state: QiWorkflowState, goalHint?: string): TransitionResult<Plan> {
+	if (state.plan && state.plan.status !== "discarded") return ok(state, state.plan);
+	return startPlan(state, inferPlanGoal(state, goalHint));
+}
+
 export function editPlanGoal(state: QiWorkflowState, goal: string, expectedRevision?: number): TransitionResult<Plan> {
 	if (!state.plan || state.plan.status === "discarded") return fail(state, "No active plan");
 	if (expectedRevision !== undefined && state.plan.revision !== expectedRevision) {
@@ -56,40 +75,61 @@ export function updatePlanSections(
 	state: QiWorkflowState,
 	patch: Partial<PlanSections>,
 	expectedRevision?: number,
+	goalHint?: string,
 ): TransitionResult<Plan> {
-	if (!state.plan || state.plan.status === "discarded") {
-		return fail(state, "No active plan — run /plan <goal> first (plan_update cannot start a plan)");
+	let working = state;
+	if (!working.plan || working.plan.status === "discarded") {
+		// Auto-create — plan_update must not force /plan first.
+		const ensured = ensureActivePlan(working, goalHint);
+		if (!ensured.ok) return ensured;
+		working = ensured.state;
+		// Fresh plan: skip revision check (caller may have sent stale/undefined rev).
+		expectedRevision = undefined;
 	}
-	if (state.plan.status !== "draft" && state.plan.status !== "ready") {
-		return fail(state, `Cannot update sections in status ${state.plan.status}`);
+	if (working.plan!.status !== "draft" && working.plan!.status !== "ready") {
+		return fail(working, `Cannot update sections in status ${working.plan!.status}`);
 	}
-	if (expectedRevision !== undefined && state.plan.revision !== expectedRevision) {
-		return fail(state, "Stale plan revision");
+	if (expectedRevision !== undefined && working.plan!.revision !== expectedRevision) {
+		return fail(working, "Stale plan revision");
 	}
 	const plan = {
-		...state.plan,
-		sections: { ...state.plan.sections, ...patch },
+		...working.plan!,
+		sections: { ...working.plan!.sections, ...patch },
 		status: "draft" as PlanStatus,
 	};
 	bump(plan);
-	return ok({ ...state, plan }, plan);
+	return ok({ ...working, plan }, plan);
 }
 
 /** Typed ready transition — never driven by assistant prose. */
-export function markPlanReady(state: QiWorkflowState, expectedRevision?: number): TransitionResult<Plan> {
-	if (!state.plan || state.plan.status === "discarded") return fail(state, "No active plan");
-	if (state.plan.status !== "draft" && state.plan.status !== "ready") {
-		return fail(state, `Cannot mark ready from status ${state.plan.status}`);
+export function markPlanReady(
+	state: QiWorkflowState,
+	expectedRevision?: number,
+	goalHint?: string,
+): TransitionResult<Plan> {
+	let working = state;
+	if (!working.plan || working.plan.status === "discarded") {
+		const ensured = ensureActivePlan(working, goalHint);
+		if (!ensured.ok) return ensured;
+		working = ensured.state;
+		expectedRevision = undefined;
 	}
-	if (expectedRevision !== undefined && state.plan.revision !== expectedRevision) {
-		return fail(state, "Stale plan revision");
+	if (working.plan!.status !== "draft" && working.plan!.status !== "ready") {
+		return fail(working, `Cannot mark ready from status ${working.plan!.status}`);
 	}
-	if (state.plan.sections.steps.length === 0) {
-		return fail(state, "Plan needs at least one step before ready");
+	if (expectedRevision !== undefined && working.plan!.revision !== expectedRevision) {
+		return fail(working, "Stale plan revision");
 	}
-	const plan = { ...state.plan, status: "ready" as PlanStatus, summary: `Ready: ${state.plan.goal}` };
+	if (working.plan!.sections.steps.length === 0) {
+		return fail(working, "Plan needs at least one step before ready");
+	}
+	const plan = {
+		...working.plan!,
+		status: "ready" as PlanStatus,
+		summary: `Ready: ${working.plan!.goal}`,
+	};
 	bump(plan);
-	return ok({ ...state, plan }, plan);
+	return ok({ ...working, plan }, plan);
 }
 
 export function discardPlan(state: QiWorkflowState, expectedRevision?: number): TransitionResult<Plan> {

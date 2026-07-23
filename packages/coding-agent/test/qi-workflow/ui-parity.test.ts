@@ -240,7 +240,7 @@ describe("qi-workflow UI projections", () => {
 		expect(text).toContain("todos=1");
 		expect(text).toContain("mcp=");
 		expect(text).toContain("rw=1");
-		expect(text).toMatch(/[◉✔○●←]/);
+		expect(text).toMatch(/[○◐●✓✗⊘]/);
 	});
 
 	it("footer puts fail and blocked ahead of routine signals", () => {
