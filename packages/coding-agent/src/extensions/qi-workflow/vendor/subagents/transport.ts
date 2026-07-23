@@ -16,8 +16,11 @@ export type AgentTurnRunner = (
 
 export class FunctionTransport implements SubagentTransport {
 	readonly kind = "fake" as const;
+	private readonly runner: AgentTurnRunner;
 
-	constructor(private readonly runner: AgentTurnRunner) {}
+	constructor(runner: AgentTurnRunner) {
+		this.runner = runner;
+	}
 
 	runTurn(agent: ManagedAgent, task: string, signal: AbortSignal): Promise<TurnOutcome> {
 		return this.runner(agent, task, signal);

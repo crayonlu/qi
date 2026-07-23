@@ -85,13 +85,21 @@ export interface McpOAuthCallbacks {
  */
 export class McpOAuthProvider implements OAuthClientProvider {
   private readonly redirectUrlSnapshot: string | undefined
+  private serverName: string
+  private serverUrl: string
+  private config: McpOAuthConfig
+  private callbacks: McpOAuthCallbacks
 
   constructor(
-    private serverName: string,
-    private serverUrl: string,
-    private config: McpOAuthConfig,
-    private callbacks: McpOAuthCallbacks,
+    serverName: string,
+    serverUrl: string,
+    config: McpOAuthConfig,
+    callbacks: McpOAuthCallbacks,
   ) {
+    this.serverName = serverName
+    this.serverUrl = serverUrl
+    this.config = config
+    this.callbacks = callbacks
     this.redirectUrlSnapshot = config.grantType === "client_credentials"
       ? undefined
       : config.redirectUri ?? `http://localhost:${getOAuthCallbackPort()}${getOAuthCallbackPath()}`

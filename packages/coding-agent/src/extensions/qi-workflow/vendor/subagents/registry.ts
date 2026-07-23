@@ -129,7 +129,10 @@ export class AgentRegistry {
 	private readonly transport: SubagentTransport;
 	private readonly now: () => number;
 
-	constructor(transport: SubagentTransport | AgentTurnRunner, private readonly options: AgentRegistryOptions = {}) {
+	private readonly options: AgentRegistryOptions;
+
+	constructor(transport: SubagentTransport | AgentTurnRunner, options: AgentRegistryOptions = {}) {
+		this.options = options;
 		this.transport = normalizeTransport(transport);
 		this.maxAgents = positiveInteger(options.maxAgents ?? 16, "maxAgents");
 		this.maxActiveTurns = positiveInteger(options.maxActiveTurns ?? 4, "maxActiveTurns");

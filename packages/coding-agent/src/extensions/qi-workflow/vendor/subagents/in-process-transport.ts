@@ -101,7 +101,10 @@ export class InProcessTransport implements SubagentTransport {
 	private readonly defaultTimeoutMs: number;
 	private readonly abortGraceMs: number;
 
-	constructor(private readonly options: InProcessTransportOptions) {
+	private readonly options: InProcessTransportOptions;
+
+	constructor(options: InProcessTransportOptions) {
+		this.options = options;
 		this.createSession = options.createSession ?? createSdkChildSession;
 		this.discoverAgent =
 			options.discoverAgent ??

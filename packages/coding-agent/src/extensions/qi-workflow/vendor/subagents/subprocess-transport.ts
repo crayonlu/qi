@@ -13,7 +13,7 @@ import type { SubagentTransport } from "./transport.ts";
 export class SubprocessTransport implements SubagentTransport {
 	readonly kind = "subprocess" as const;
 
-	constructor(private readonly ctx: ExtensionContext) {}
+	constructor(_ctx: ExtensionContext) {}
 
 	async runTurn(record: ManagedAgent, task: string, signal: AbortSignal): Promise<TurnOutcome> {
 		const settings = readSubagentSettings();

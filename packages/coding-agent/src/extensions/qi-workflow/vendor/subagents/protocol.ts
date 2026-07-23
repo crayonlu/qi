@@ -16,8 +16,10 @@ export class JsonLineDecoder {
 	private droppingOversizedLine = false;
 	private readonly maxLineBytes: number;
 	private readonly decoder = new StringDecoder("utf8");
+	private readonly options: JsonLineDecoderOptions;
 
-	constructor(private readonly options: JsonLineDecoderOptions) {
+	constructor(options: JsonLineDecoderOptions) {
+		this.options = options;
 		const maxLineBytes = options.maxLineBytes ?? DEFAULT_MAX_LINE_BYTES;
 		if (!Number.isSafeInteger(maxLineBytes) || maxLineBytes < 1) {
 			throw new Error("JSON line limit must be a positive safe integer");

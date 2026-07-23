@@ -53,8 +53,12 @@ export class McpServerManager {
   private acceptedUrlElicitations = new Map<string, Set<string>>();
   private defaultRequestTimeoutMs: number | undefined;
 
+  private readonly defaultCwd: string | undefined;
+
   /** Default cwd for stdio servers without an explicit config `cwd`. */
-  constructor(private readonly defaultCwd?: string) {}
+  constructor(defaultCwd?: string) {
+    this.defaultCwd = defaultCwd;
+  }
 
   setSamplingConfig(config: ServerSamplingConfig | undefined): void {
     this.samplingConfig = config;
